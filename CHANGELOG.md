@@ -7,6 +7,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-07
+
+### Fixed
+
+- Made the `SPEC` environment override optional. `Config.Spec` can now be
+  supplied by a TOML file through `confmaker/confx` without also requiring the
+  prefixed environment variable; `Config.Validate` still rejects an empty
+  effective value.
+
 ## [0.1.1] - 2026-08-06
 
 ### Changed
@@ -35,6 +44,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Lifecycle hooks rely on the application's `fx.StartTimeout` / `fx.StopTimeout`.
 - Interval (`@every`) and cron scheduling, with a cryptographically random start delay bounded by `Jitter`.
 
-[Unreleased]: https://github.com/uchaloop/beat/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/uchaloop/beat/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/uchaloop/beat/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/uchaloop/beat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0

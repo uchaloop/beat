@@ -13,7 +13,7 @@ import (
 type Config struct {
 	// Spec is the schedule: an interval such as "@every 5s" or a cron
 	// expression such as "*/5 * * * * *". Required.
-	Spec string `koanf:"spec" env:"SPEC,required"`
+	Spec string `koanf:"spec" env:"SPEC"`
 
 	// JobTimeout bounds the context of a single Job execution. Zero (unset)
 	// uses the default, 1m; every execution is bounded, so set a larger value
