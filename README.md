@@ -15,17 +15,15 @@ go get github.com/uchaloop/beat
 
 ## Fx
 
-```toml
-[beat]
-spec = "@every 5s"
-job_timeout = "1m"
-jitter = "0s"
+```text
+BEAT_SPEC=@every 5s
+BEAT_JITTER=0s
 ```
 
 ```go
 fx.New(
-	confx.LoadDir("config"),
-	confx.ProvideDefault[beat.Config]("beat"),
+	confx.Module(),
+	confx.Provide[beat.Config]("beat"),
 
 	fx.Provide(func() beat.Job {
 		return func(ctx context.Context) (int, error) {
@@ -67,20 +65,20 @@ fx.New(
 
 ## Configuration
 
-| Field | TOML | Environment | Default |
-|---|---|---|---|
-| `Spec` | `spec` | `SPEC` | required |
-| `JobTimeout` | `job_timeout` | `JOB_TIMEOUT` | `1m` |
-| `Jitter` | `jitter` | `JITTER` | `0` |
+| Field | Variable | Default |
+|---|---|---|
+| `Spec` | `SPEC` | none - the deployment supplies it |
+| `JobTimeout` | `JOB_TIMEOUT` | `1m` |
+| `Jitter` | `JITTER` | `0` |
+
+The variables carry the prefix the application gives the instance, so
+`confx.Provide[beat.Config]("beat")` reads `BEAT_SPEC` and the rest.
 
 Examples:
 
-```toml
-spec = "@every 5s"
-```
-
-```toml
-spec = "*/5 * * * * *"
+```text
+BEAT_SPEC=@every 5s
+BEAT_SPEC=*/5 * * * * *
 ```
 
 For interval schedules, the delay is measured after the previous run finishes.
