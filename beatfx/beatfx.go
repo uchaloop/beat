@@ -40,8 +40,8 @@ type params struct {
 // register ones that must be built from other container values with AsOption.
 //
 //	fx.New(
-//		confx.LoadModule("config/local.toml"),
-//		confx.ProvideDefault[beat.Config]("beat"),
+//		confx.Module(),
+//		confx.Provide[beat.Config]("beat"),
 //		fx.Provide(func() beat.Job { return work }),
 //		fx.Provide(func() beat.Handler { return metricsHandler }),
 //		beatfx.AsOption(func(db *sql.DB) beat.Option { // DI-built option

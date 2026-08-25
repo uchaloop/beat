@@ -5,7 +5,26 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-25
+
+### Added
+
+- `Config.SetDefaults` establishes `JobTimeout`, so a loader starts from `1m`
+  and a generated `.env.example` carries the real default rather than a blank.
+  A `Config` built in Go by hand still gets the same value from `MakeBeat`,
+  which keeps treating a zero timeout as the default; both apply one constant.
+
+### Changed
+
+- `Spec` declares `notEmpty`, so a deployment that forgets it is told which
+  variable is missing before anything is built. `Validate` still reports an
+  empty `Spec` as well, for a `Config` assembled in Go that never goes near a
+  loader.
+- `Validate` reports every problem at once instead of the first.
+
+### Removed
+
+- The `koanf` struct tags. Configuration is read from the environment only.
 
 ## [0.1.2] - 2026-08-07
 
@@ -44,7 +63,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Lifecycle hooks rely on the application's `fx.StartTimeout` / `fx.StopTimeout`.
 - Interval (`@every`) and cron scheduling, with a cryptographically random start delay bounded by `Jitter`.
 
-[Unreleased]: https://github.com/uchaloop/beat/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/uchaloop/beat/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/uchaloop/beat/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/uchaloop/beat/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/uchaloop/beat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0
