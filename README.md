@@ -67,12 +67,16 @@ fx.New(
 
 | Field | Variable | Default |
 |---|---|---|
-| `Spec` | `SPEC` | none - the deployment supplies it |
-| `JobTimeout` | `JOB_TIMEOUT` | `1m` |
+| `Spec` | `SPEC` | none - the deployment has to supply it |
+| `JobTimeout` | `JOB_TIMEOUT` | `1m`, from `Config.SetDefaults` |
 | `Jitter` | `JITTER` | `0` |
 
 The variables carry the prefix the application gives the instance, so
-`confx.Provide[beat.Config]("beat")` reads `BEAT_SPEC` and the rest.
+`confx.Provide[beat.Config]("beat")` reads `BEAT_SPEC` and the rest, and
+`confx.Manifest[beat.Config]("beat")` lists the same set from the type itself.
+
+`Spec` is declared `notEmpty`, so a deployment that forgets a schedule is told
+which variable is missing before anything is built.
 
 Examples:
 
