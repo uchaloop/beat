@@ -7,6 +7,25 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `Config.SetDefaults` establishes `JobTimeout`, so a loader starts from `1m`
+  and a generated `.env.example` carries the real default rather than a blank.
+  A `Config` built in Go by hand still gets the same value from `MakeBeat`,
+  which keeps treating a zero timeout as the default; both apply one constant.
+
+### Changed
+
+- `Spec` declares `notEmpty`, so a deployment that forgets it is told which
+  variable is missing before anything is built. `Validate` still reports an
+  empty `Spec` as well, for a `Config` assembled in Go that never goes near a
+  loader.
+- `Validate` reports every problem at once instead of the first.
+
+### Removed
+
+- The `koanf` struct tags. Configuration is read from the environment only.
+
 ## [0.1.2] - 2026-08-07
 
 ### Fixed

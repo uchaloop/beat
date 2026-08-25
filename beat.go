@@ -7,7 +7,7 @@
 // beat has no built-in metrics: after every run it hands a Record to a Handler,
 // the same way slog hands a Record to its handler. Metrics, logging and tracing
 // are adapters the caller supplies. Configuration is declared as a plain struct
-// with koanf and env tags and loaded by the application through confmaker/confx,
+// with env tags and loaded by the application through confmaker/confx,
 // so beat never reads files or the environment itself.
 //
 // Scheduling has two modes. An "@every" interval measures the gap from the end
