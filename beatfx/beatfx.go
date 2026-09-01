@@ -1,7 +1,33 @@
-// Package beatfx wires a beat.Beat into an Uber Fx application: it builds the
-// Beat from the container's Config, Job and optional Handler, and drives its
-// Start/Stop from the Fx lifecycle. The core beat package has no Fx dependency;
-// this package is the Fx integration, mirroring confmaker/confx.
+/*
+Package beatfx wires a beat.Beat into an Uber Fx application. The core beat
+package has no Fx dependency; this package is the integration, the way
+confmaker/confx is for configuration.
+
+[Module] builds the Beat from what the container holds and drives its Start and
+Stop from the Fx lifecycle. It takes a beat.Config and a beat.Job, an optional
+beat.Handler, and any beat.Option provided into the module's value group:
+
+	fx.New(
+		confx.Module(),
+		confx.Provide[beat.Config]("beat"),
+
+		fx.Provide(func() beat.Job { return work }),
+
+		beatfx.Module(beat.WithMiddleware(recovery.Middleware())),
+	).Run()
+
+An option passed to Module directly is static - it is known when the application
+is described. [AsOption] is for one that is not, because it depends on something
+the container builds:
+
+	beatfx.AsOption(func(db *sql.DB) beat.Option {
+		return beat.WithOnStart(db.PingContext)
+	})
+
+A Handler is optional so a job can run without one, but an application that
+wants to know what its runs did supplies it - that is beat's only channel for
+reporting.
+*/
 package beatfx
 
 import (

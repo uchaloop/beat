@@ -1,26 +1,3 @@
-// Package beat runs a single background Job on a schedule: on an interval
-// ("@every 5s") or a cron expression ("*/5 * * * * *"), optionally after a start
-// hook, bounded by a per-run timeout, wrapped by a chain of Middleware. Build a
-// Beat with MakeBeat and drive it with Start/Stop, or use the beat/beatfx
-// subpackage to wire it into an Uber Fx application.
-//
-// beat has no built-in metrics: after every run it hands a Record to a Handler,
-// the same way slog hands a Record to its handler. Metrics, logging and tracing
-// are adapters the caller supplies. Configuration is declared as a plain struct
-// with env tags and loaded by the application through confmaker/confx,
-// so beat never reads files or the environment itself.
-//
-// Scheduling has two modes. An "@every" interval measures the gap from the end
-// of one run to the start of the next, so the effective period grows by the
-// Job's duration. A cron spec fires at fixed wall-clock points and skips a point
-// a long run overruns - it never queues catch-up runs.
-//
-// One Beat runs one Job; beat is single-instance per application. The core does
-// not recover panics: a panic in the Job (or Handler) propagates and crashes the
-// process, with a full stack on stderr - the honest default for user code that
-// misbehaves. To keep the scheduler alive instead, add middleware/recovery,
-// which recovers the panic, optionally logs it with its stack, and reports it as
-// a *PanicError on the Record.
 package beat
 
 import (
