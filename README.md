@@ -2,22 +2,30 @@
 
 [![CI](https://github.com/uchaloop/beat/actions/workflows/ci.yml/badge.svg)](https://github.com/uchaloop/beat/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/uchaloop/beat.svg)](https://pkg.go.dev/github.com/uchaloop/beat)
-[![License: MIT](https://img.shields.io/badge/github/license/uchaloop/beat)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/uchaloop/beat)](LICENSE)
 
-A background-job scheduler for Go with interval and cron schedules, middleware,
-run timeouts, result handlers, and Uber Fx integration.
+A background-job scheduler for Go: one job, an interval or cron schedule,
+middleware, a run timeout, and Uber Fx integration.
 
-## Installation
+- **No built-in metrics** - after every run a `Record` goes to a `Handler`, the
+  way slog hands a record to its handler. Metrics, logging and tracing are
+  adapters you supply.
+- **It reads no config source** - `Config` is a plain struct with env tags the
+  application loads and supplies.
+- **Every run is bounded**, so a job that ignores its context cannot wedge the
+  loop.
+- **Panics crash the process** unless you say otherwise, which is a middleware
+  away.
 
 ```bash
 go get github.com/uchaloop/beat
 ```
 
-## Fx
+## Quick start
 
 ```text
 BEAT_SPEC=@every 5s
-BEAT_JITTER=0s
+BEAT_JOB_TIMEOUT=1m
 ```
 
 ```go
@@ -26,41 +34,31 @@ fx.New(
 	confx.Provide[beat.Config]("beat"),
 
 	fx.Provide(func() beat.Job {
-		return func(ctx context.Context) (int, error) {
-			processed := 0
+		return func(ctx context.Context) (processed int, err error) {
 			// Do one unit of work.
-
 			return processed, nil
 		}
 	}),
 
 	fx.Provide(func(log *slog.Logger) beat.Handler {
-		return beat.HandlerFunc(func(_ context.Context, record beat.Record) {
-			log.Info(
-				"beat run",
-				"iteration", record.Iteration,
-				"processed", record.Processed,
-				"duration", record.Duration,
-				"error", record.Err,
+		return beat.HandlerFunc(func(_ context.Context, r beat.Record) {
+			log.Info("beat run",
+				"iteration", r.Iteration,
+				"processed", r.Processed,
+				"duration", r.Duration,
+				"error", r.Err,
 			)
 		})
 	}),
 
-	beatfx.Module(),
+	beatfx.Module(beat.WithMiddleware(recovery.Middleware())),
 ).Run()
 ```
 
-Without a configuration file:
+Without Fx:
 
 ```go
-fx.New(
-	fx.Supply(beat.Config{
-		Spec:       "@every 5s",
-		JobTimeout: time.Minute,
-	}),
-	fx.Provide(func() beat.Job { return work }),
-	beatfx.Module(),
-)
+scheduler, err := beat.MakeBeat(cfg, job, handler, opts...)
 ```
 
 ## Configuration
@@ -71,165 +69,27 @@ fx.New(
 | `JobTimeout` | `JOB_TIMEOUT` | `1m`, from `Config.SetDefaults` |
 | `Jitter` | `JITTER` | `0` |
 
-The variables carry the prefix the application gives the instance, so
-`confx.Provide[beat.Config]("beat")` reads `BEAT_SPEC` and the rest, and
-`confx.Manifest[beat.Config]("beat")` lists the same set from the type itself.
-
-`Spec` is declared `notEmpty`, so a deployment that forgets a schedule is told
-which variable is missing before anything is built.
-
-Examples:
-
-```text
-BEAT_SPEC=@every 5s
-BEAT_SPEC=*/5 * * * * *
-```
-
-For interval schedules, the delay is measured after the previous run finishes.
-Cron schedules follow wall-clock times and do not queue missed runs.
-
-`JobTimeout` limits each execution. `Jitter` delays the first interval run or
-each cron tick to reduce synchronized work across replicas.
-
-## Results
-
-A job returns the number of processed items and an error:
-
-```go
-type Job func(context.Context) (int, error)
-```
-
-After every run, a handler receives:
-
-```go
-type Record struct {
-	Iteration int64
-	Start     time.Time
-	Duration  time.Duration
-	Processed int
-	Err       error
-	Mode      beat.Mode
-}
-```
-
-Send a record to several destinations:
-
-```go
-beat.MultiHandler(metricsHandler, loggingHandler)
-```
-
-## Options
-
-Pass static options to `beatfx.Module`:
-
-```go
-beatfx.Module(
-	beat.WithMiddleware(
-		recovery.Middleware(),
-		idle.Middleware(backoff),
-	),
-	beat.WithGracefulStop(),
-)
-```
-
-Available options:
-
-- `WithMiddleware`
-- `WithHandler`
-- `WithOnStart`
-- `WithOnStop`
-- `WithGracefulStop`
-
-Build an option from Fx dependencies:
-
-```go
-beatfx.AsOption(func(db *sql.DB) beat.Option {
-	return beat.WithOnStart(db.PingContext)
-})
-```
-
-By default, shutdown cancels the running job. `WithGracefulStop` lets it finish
-within the application's Fx stop timeout.
+The prefix comes from the instance name, so `confx.Provide[beat.Config]("beat")`
+reads `BEAT_SPEC` and the rest, and `confx.Manifest[beat.Config]("beat")` lists
+the same set from the type.
 
 ## Middleware
 
-Middleware wraps a job:
-
 ```go
-type Middleware func(next beat.Job) beat.Job
-```
-
-In `WithMiddleware(a, b, c)`, `a` is the outermost middleware.
-
-### Panic recovery
-
-By default, a panic terminates the process. Add recovery middleware to keep the
-scheduler running:
-
-```go
-recovery.Middleware(
-	recovery.WithLogger(logger),
+beat.WithMiddleware(
+	recovery.Middleware(recovery.WithLogger(logger)),  // keep the loop alive
+	idle.Middleware(backoff),                          // pause on failure
+	batch.Middleware(drain),                           // pause when there is nothing to do
 )
 ```
 
-The recovered panic is reported as `*beat.PanicError`.
-
-### Idle backoff
-
-```go
-idle.Middleware(func(err error) time.Duration {
-	if err != nil {
-		return 5 * time.Second
-	}
-
-	return 0
-})
-```
-
-### Batch delay
-
-```go
-batch.Middleware(func(processed int, err error) time.Duration {
-	if processed == 0 {
-		return 3 * time.Second
-	}
-
-	return 0
-})
-```
-
-### Custom middleware
-
-```go
-func WithOperation(name string) beat.Middleware {
-	return func(next beat.Job) beat.Job {
-		return func(ctx context.Context) (int, error) {
-			ctx = context.WithValue(ctx, operationKey{}, name)
-
-			return next(ctx)
-		}
-	}
-}
-```
-
-## Without Fx
-
-```go
-scheduler, err := beat.MakeBeat(cfg, job, handler, opts...)
-if err != nil {
-	return err
-}
-
-if err := scheduler.Start(ctx); err != nil {
-	return err
-}
-defer scheduler.Stop(context.Background())
-```
+The first is outermost. A middleware is `func(next beat.Job) beat.Job`, so
+writing your own needs nothing from this package.
 
 ## OpenTelemetry
 
-Use [`otelbeat`](https://github.com/uchaloop/otelbeat) to record run duration,
-processed item counts, status, and schedule mode:
+[otelbeat](https://github.com/uchaloop/otelbeat) records run duration, processed
+counts, status and schedule mode:
 
 ```go
 fx.New(
@@ -237,6 +97,13 @@ fx.New(
 	beatfx.Module(),
 )
 ```
+
+## Documentation
+
+The scheduling modes, the options, the record and the reasons behind them are in
+the package documentation:
+**[pkg.go.dev/github.com/uchaloop/beat](https://pkg.go.dev/github.com/uchaloop/beat)**.
+Each middleware and the Fx integration document themselves.
 
 ## Acknowledgements
 

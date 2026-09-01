@@ -1,9 +1,9 @@
 package beat
 
 import (
-	"errors"
-	"fmt"
 	"time"
+
+	"github.com/uchaloop/validate"
 )
 
 // Config is the configuration beat declares. The env tags are inert strings: an
@@ -48,22 +48,16 @@ func (c *Config) SetDefaults() {
 // this speaks to any caller, including one that builds a Config in Go and never
 // goes near a loader.
 func (c Config) Validate() error {
-	var errs []error
+	var errs validate.Errors
 
-	switch {
-	case len(c.Spec) == 0:
-		errs = append(errs, errors.New("spec is required"))
-	default:
-		if _, err := parseSchedule(c.Spec); err != nil {
-			errs = append(errs, fmt.Errorf("invalid spec %q: %w", c.Spec, err))
-		}
-	}
-	if c.JobTimeout < 0 {
-		errs = append(errs, errors.New("job_timeout must be >= 0"))
-	}
-	if c.Jitter < 0 {
-		errs = append(errs, errors.New("jitter must be >= 0"))
+	if len(c.Spec) == 0 {
+		errs.Addf("spec is required")
+	} else if _, err := parseSchedule(c.Spec); err != nil {
+		errs.Addf("invalid spec %q: %w", c.Spec, err)
 	}
 
-	return errors.Join(errs...)
+	errs.Require(c.JobTimeout >= 0, "job_timeout must be >= 0")
+	errs.Require(c.Jitter >= 0, "jitter must be >= 0")
+
+	return errs.Err()
 }

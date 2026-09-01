@@ -1,9 +1,10 @@
 module github.com/uchaloop/beat
 
-go 1.26.1
+go 1.27
 
 require (
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/uchaloop/validate v0.1.0
 	go.uber.org/fx v1.24.0
 )
 
