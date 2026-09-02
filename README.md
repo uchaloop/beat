@@ -1,8 +1,12 @@
-# beat
+<p align="center">
+  <img src="logo.png" alt="beat" width="320">
+</p>
 
-[![CI](https://github.com/uchaloop/beat/actions/workflows/ci.yml/badge.svg)](https://github.com/uchaloop/beat/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/uchaloop/beat.svg)](https://pkg.go.dev/github.com/uchaloop/beat)
-[![License: MIT](https://img.shields.io/github/license/uchaloop/beat)](LICENSE)
+<p align="center">
+  <a href="https://github.com/uchaloop/beat/actions/workflows/ci.yml"><img src="https://github.com/uchaloop/beat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/uchaloop/beat"><img src="https://pkg.go.dev/badge/github.com/uchaloop/beat.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/uchaloop/beat" alt="License: MIT"></a>
+</p>
 
 A background-job scheduler for Go: one job, an interval or cron schedule,
 middleware, a run timeout, and Uber Fx integration.
