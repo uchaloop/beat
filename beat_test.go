@@ -77,6 +77,12 @@ func TestIsEverySpec(t *testing.T) {
 	}
 }
 
+func TestConfigNameIsBeat(t *testing.T) {
+	if got := (Config{}).ConfigName(); got != "beat" {
+		t.Fatalf("ConfigName() = %q, want beat", got)
+	}
+}
+
 func TestConfigValidate(t *testing.T) {
 	if err := (Config{Spec: "@every 1s"}).Validate(); err != nil {
 		t.Errorf("valid spec rejected: %v", err)

@@ -9,7 +9,7 @@ beat.Handler, and any beat.Option provided into the module's value group:
 
 	fx.New(
 		confx.Module(),
-		confx.Provide[beat.Config]("beat"),
+		confx.Provide[beat.Config](),
 
 		fx.Provide(func() beat.Job { return work }),
 
@@ -67,7 +67,7 @@ type params struct {
 //
 //	fx.New(
 //		confx.Module(),
-//		confx.Provide[beat.Config]("beat"),
+//		confx.Provide[beat.Config](),
 //		fx.Provide(func() beat.Job { return work }),
 //		fx.Provide(func() beat.Handler { return metricsHandler }),
 //		beatfx.AsOption(func(db *sql.DB) beat.Option { // DI-built option

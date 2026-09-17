@@ -7,8 +7,8 @@ import (
 )
 
 // Config is the configuration beat declares. The env tags are inert strings: an
-// application loads them with confmaker/confx and provides the filled Config
-// into the container. beat itself never reads the environment.
+// application loads them with github.com/uchaloop/confmaker and provides the
+// filled Config into the container. beat itself never reads the environment.
 type Config struct {
 	// Spec is the schedule: an interval such as "@every 5s" or a cron
 	// expression such as "*/5 * * * * *". The deployment has to supply it: there
@@ -27,7 +27,7 @@ type Config struct {
 }
 
 // SetDefaults establishes the values a deployment does not have to think about.
-// confmaker/confx calls it before the environment is applied, so a variable left
+// confmaker calls it before the environment is applied, so a variable left
 // unset keeps what is set here, and a generated .env.example carries the real
 // default rather than a blank.
 //
@@ -38,7 +38,12 @@ func (c *Config) SetDefaults() {
 	c.JobTimeout = defaultJobTimeout
 }
 
-// Validate reports whether the Config is usable. confmaker/confx calls it after
+// ConfigName is the default instance name, "beat": a loader such as confmaker
+// reads BEAT_SPEC and the rest of BEAT_* unless the application names the
+// instance itself.
+func (Config) ConfigName() string { return "beat" }
+
+// Validate reports whether the Config is usable. confmaker calls it after
 // filling the struct, and it reports every problem at once rather than the
 // first: a deployment is fixed in a config map and rolled out, so one report is
 // one round trip.

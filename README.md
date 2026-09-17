@@ -35,7 +35,7 @@ BEAT_JOB_TIMEOUT=1m
 ```go
 fx.New(
 	confx.Module(),
-	confx.Provide[beat.Config]("beat"),
+	confx.Provide[beat.Config](),
 
 	fx.Provide(func() beat.Job {
 		return func(ctx context.Context) (processed int, err error) {
@@ -73,9 +73,9 @@ scheduler, err := beat.MakeBeat(cfg, job, handler, opts...)
 | `JobTimeout` | `JOB_TIMEOUT` | `1m`, from `Config.SetDefaults` |
 | `Jitter` | `JITTER` | `0` |
 
-The prefix comes from the instance name, so `confx.Provide[beat.Config]("beat")`
-reads `BEAT_SPEC` and the rest, and `confx.Manifest[beat.Config]("beat")` lists
-the same set from the type.
+`Config` names its default instance `beat`, which gives the prefix, so
+`confx.Provide[beat.Config]()` reads `BEAT_SPEC` and the rest, and
+`confmaker.Manifest[beat.Config]()` lists the same set from the type.
 
 ## Middleware
 
