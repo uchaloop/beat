@@ -1,24 +1,11 @@
-/*
-Package recovery provides a beat.Middleware that recovers from a panic in the
-Job and turns it into a *beat.PanicError, so one bad run does not take the
-process with it.
-
-The beat core deliberately does not recover panics: a panic that propagates
-crashes the process with a stack on stderr, which is the honest outcome for user
-code that misbehaved and one a supervisor restarts. That default is wrong for a
-scheduler whose job touches input it does not control, where a single malformed
-record should not stop every later run. This middleware is how that choice is
-made explicitly rather than by default.
-
-	beatfx.Module(
-		beat.WithMiddleware(recovery.Middleware(recovery.WithLogger(logger))),
-	)
-
-The recovered value and its stack are reported as a *beat.PanicError in the
-run's error, so a Handler tells a panic from an ordinary failure with errors.As.
-[WithLogger] additionally logs it where it happened, with the stack, which is
-the only place the stack is still complete.
-*/
+// Package recovery supplies middleware that converts panics in the wrapped
+// Job call into beat.PanicError, including the recovered value and stack.
+// WithLogger also logs the panic. Recovery does not cover Handler, lifecycle
+// hooks, backoff callbacks, or goroutines created by Job.
+//
+// Place recovery before middleware whose panics it should catch:
+//
+//	beat.WithMiddleware(recovery.Middleware(recovery.WithLogger(logger)))
 package recovery
 
 import (

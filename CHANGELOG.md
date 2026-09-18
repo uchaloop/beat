@@ -1,105 +1,67 @@
 # Changelog
 
-All notable changes to this module are documented in this file.
+## [Unreleased]
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.4.0] - 2026-09-18
 
-## [0.3.2] - 2026-09-17
+### Breaking changes
 
-### Added
-
-- `Config.ConfigName` returns `beat`, the default instance name for confmaker
-  v0.6.2 and later: `confx.Provide[beat.Config]()` reads `BEAT_*` without naming
-  the instance.
-
-### Changed
-
-- The README and the beatfx documentation show the confmaker v0.6.2 API:
-  `confx.Provide[beat.Config]()` and `confmaker.Manifest[beat.Config]()` instead of
-  a positional instance name.
-
-## [0.3.1] - 2026-09-02
+- `Config.Period` replaces `Spec`; scheduling uses `ModeFixedRate` (default) or
+  `ModeFixedDelay`. Calendar expressions and the cron dependency are removed.
+- `Record` includes `ScheduledFor`, `Period`, `Outcome` and `Missed`.
+- `WithBackoff` replaces the idle/batch middleware; exported `Wait` is removed.
+- `beatfx.Options` replaces `AsOption` with one ordered container-provided slice.
 
 ### Added
 
-- A logo in the README.
-
-## [0.3.0] - 2026-09-01
-
-### Changed
-
-- The package documentation carries the scheduling modes, the config, the
-  options and the record; the README is a landing page. beatfx and the three
-  middleware document themselves, so a subpackage opened on its own says what it
-  is and when to reach for it.
-- The package comment moved from `beat.go` into `doc.go`, in line comments: a
-  cron spec contains `*/`, which ends a block comment.
-- `Config.Validate` accumulates through `github.com/uchaloop/validate` instead of
-  a hand-rolled slice and `errors.Join`. The messages and their order are
-  unchanged, and `errors` and `fmt` are no longer imported here.
-- The module is built with Go 1.27, which the new dependency requires. A module
-  that depends on this one has to declare 1.27 as well.
-
-## [0.2.0] - 2026-08-25
-
-### Added
-
-- `Config.SetDefaults` establishes `JobTimeout`, so a loader starts from `1m`
-  and a generated `.env.example` carries the real default rather than a blank.
-  A `Config` built in Go by hand still gets the same value from `MakeBeat`,
-  which keeps treating a zero timeout as the default; both apply one constant.
-
-### Changed
-
-- `Spec` declares `notEmpty`, so a deployment that forgets it is told which
-  variable is missing before anything is built. `Validate` still reports an
-  empty `Spec` as well, for a `Config` assembled in Go that never goes near a
-  loader.
-- `Validate` reports every problem at once instead of the first.
-
-### Removed
-
-- The `koanf` struct tags. Configuration is read from the environment only.
-
-## [0.1.2] - 2026-08-07
+- Absolute fixed-rate grid, fixed-delay scheduling, `WithOffset` and `OffsetFor`.
+  Jitter accepts the full period; intentional backoff is excluded from Missed.
+- Single-start lifecycle, repeatable Stop, lifecycle errors and `Done()`.
+- Current API examples, execution diagram and documented shutdown contracts.
 
 ### Fixed
 
-- Made the `SPEC` environment override optional. `Config.Spec` can now be
-  supplied by a TOML file through `confmaker/confx` without also requiring the
-  prefixed environment variable; `Config.Validate` still rejects an empty
-  effective value.
+- Offsets no longer reduce the time available before the next fixed-rate target.
+- Concurrent startup/shutdown and repeated Stop preserve one cleanup owner.
+  A successful startup cancelled before launch triggers bounded cooperative cleanup.
+- Timeout and shutdown outcomes are reported even when Job returns a nil error.
+- Histogram consumers can distinguish Job duration from Handler/backoff time.
+
+## [0.3.2] - 2026-09-17
+
+- Added `ConfigName()` with default instance name `beat`.
+- Updated confmaker examples.
+
+## [0.3.1] - 2026-09-02
+
+- Added README logo.
+
+## [0.3.0] - 2026-09-01
+
+- Required Go 1.27 and adopted `validate` for accumulated config errors.
+- Expanded package documentation.
+
+## [0.2.0] - 2026-08-25
+
+- Added `Config.SetDefaults` and accumulated validation errors.
+- Required an explicit schedule and removed koanf tags.
+
+## [0.1.2] - 2026-08-07
+
+- Allowed schedule configuration without a SPEC environment override.
 
 ## [0.1.1] - 2026-08-06
 
-### Changed
-
-- Reworked the README as concise, user-focused documentation.
+- Updated README.
 
 ## [0.1.0] - 2026-08-06
 
-### Added
-
-- Initial release: `beat` runs one background `Job` on a schedule inside an Uber Fx application.
-- Core contracts `Job func(ctx) (int, error)` and `Middleware func(next Job) Job` (classic composition).
-- `Handler`/`HandlerFunc` observability seam receiving a `Record` after every run, mirroring `slog`; no built-in metrics.
-- `Record.Mode` (`interval`/`cron`) so handlers can label the scheduling mode (used by the companion metrics module).
-- `Config` with `koanf` and `env` tags (`Spec`, `JobTimeout`, `Jitter`), loadable through `confmaker/confx`; the core reads neither files nor the environment.
-- Standalone lifecycle `MakeBeat` + `(*Beat).Start`/`Stop`; the core package has no Fx dependency.
-- Fx integration in `beat/beatfx`: `beatfx.Module` (one entry point consuming `Config`, `Job`, and an optional `Handler`) and `beatfx.AsOption` (register DI-built options through the `beat_options` value group, mixable with the static options passed to `Module`).
-- Options `WithMiddleware`, `WithHandler`, `WithOnStart`, `WithOnStop`.
-- `WithGracefulStop` to let the in-flight run finish on shutdown instead of cancelling its context.
-- Middleware packages `middleware/{recovery,idle,batch}`.
-- Exported `Wait` helper for cancellable delays in custom middleware.
-- `MultiHandler` to fan a `Record` out to several handlers (e.g. metrics + logging) behind the single `Handler` slot.
-- Panics are not recovered by the core: a panic in the Job (or Handler) crashes the process with a stack on stderr. Add `middleware/recovery` to keep the loop alive.
-- `middleware/recovery` recovers a Job panic into a `*PanicError{Value, Stack}` on the `Record` (detectable via `errors.As`) and, with `WithLogger`, logs it with its stack.
-- `JobTimeout` defaults to 1m and every execution is bounded, so a Job that ignores its context cannot silently wedge the loop.
-- Lifecycle hooks rely on the application's `fx.StartTimeout` / `fx.StopTimeout`.
-- Interval (`@every`) and cron scheduling, with a cryptographically random start delay bounded by `Jitter`.
+- Initial release: interval/cron scheduling, Job middleware, Handler records,
+  standalone and Fx lifecycles, cooperative timeouts and graceful stop.
+- Added recovery, idle and batch middleware, plus MultiHandler.
 
 [Unreleased]: https://github.com/uchaloop/beat/compare/v0.3.2...HEAD
+[0.4.0]: https://github.com/uchaloop/beat/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/uchaloop/beat/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/uchaloop/beat/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/uchaloop/beat/compare/v0.2.0...v0.3.0
