@@ -10,36 +10,40 @@ import (
 // application loads them with github.com/uchaloop/confmaker and provides the
 // filled Config into the container. beat itself never reads the environment.
 type Config struct {
-	// Spec is the schedule: an interval such as "@every 5s" or a cron
-	// expression such as "*/5 * * * * *". The deployment has to supply it: there
-	// is no schedule that makes sense for every job.
-	Spec string `env:"SPEC,notEmpty"`
+	// Period is how often the Job runs. Under ModeFixedRate it is the spacing
+	// of the grid the runs sit on; under ModeFixedDelay it is the pause between
+	// the end of one run and the start of the next. The deployment has to
+	// supply it: there is no period that makes sense for every job.
+	Period time.Duration `env:"PERIOD,notEmpty"`
 
-	// JobTimeout bounds the context of a single Job execution. Every execution is
-	// bounded, so set a larger value for a legitimately long Job.
+	// JobTimeout cancels a run's context after this duration. Zero selects one
+	// minute. Cancellation is cooperative: Job must return and join its own
+	// goroutines. A longer timeout can allow a run to cover multiple grid points.
 	JobTimeout time.Duration `env:"JOB_TIMEOUT"`
 
-	// Jitter is the maximum random delay used to stagger instances so replicas
-	// do not all fire at once. For an interval it is applied once before the
-	// first run; for cron it is added to every tick, so keep it below the cron
-	// interval. Zero disables it.
+	// Jitter is the upper bound of the random offset that staggers replicas so
+	// they do not all fire at once. The draw is half-open, [0, Jitter), and
+	// happens once when the Beat is built, so the offset holds for the life of
+	// the process. Zero disables it; WithOffset replaces the draw with a value
+	// the application chooses.
+	//
+	// It may be as large as Period - spreading replicas over the whole period is
+	// what an evenly polling deployment wants. Work tied to a boundary is the
+	// exception: a wide jitter delays it by that much.
+	//
+	// It spreads load. It is not a guard against two replicas doing the same
+	// work: runs longer than the offset overlap regardless.
 	Jitter time.Duration `env:"JITTER"`
 }
 
-// SetDefaults establishes the values a deployment does not have to think about.
-// confmaker calls it before the environment is applied, so a variable left
-// unset keeps what is set here, and a generated .env.example carries the real
-// default rather than a blank.
-//
-// A Config built in Go by hand does not go through it, which is why MakeBeat
-// still treats a zero JobTimeout as the default. Both paths apply the same
-// constant; neither states the value twice.
+// SetDefaults sets JobTimeout to one minute. Configuration loaders call it
+// before applying input. MakeBeat also defaults a zero JobTimeout.
 func (c *Config) SetDefaults() {
 	c.JobTimeout = defaultJobTimeout
 }
 
 // ConfigName is the default instance name, "beat": a loader such as confmaker
-// reads BEAT_SPEC and the rest of BEAT_* unless the application names the
+// reads BEAT_PERIOD and the rest of BEAT_* unless the application names the
 // instance itself.
 func (Config) ConfigName() string { return "beat" }
 
@@ -47,22 +51,21 @@ func (Config) ConfigName() string { return "beat" }
 // filling the struct, and it reports every problem at once rather than the
 // first: a deployment is fixed in a config map and rolled out, so one report is
 // one round trip.
-//
-// The Spec check overlaps the notEmpty tag on purpose. The tag speaks to a
-// deployment - it names the variable and fires before anything is built - while
-// this speaks to any caller, including one that builds a Config in Go and never
-// goes near a loader.
 func (c Config) Validate() error {
 	var errs validate.Errors
 
-	if len(c.Spec) == 0 {
-		errs.Addf("spec is required")
-	} else if _, err := parseSchedule(c.Spec); err != nil {
-		errs.Addf("invalid spec %q: %w", c.Spec, err)
-	}
-
+	errs.Require(c.Period > 0, "period must be > 0")
 	errs.Require(c.JobTimeout >= 0, "job_timeout must be >= 0")
 	errs.Require(c.Jitter >= 0, "jitter must be >= 0")
+
+	// Jitter bounds a half-open draw, so a jitter equal to the period still
+	// yields offsets inside it - and spreading replicas over the whole period is
+	// exactly what a poller wants. Only a jitter past the period could put a run
+	// on the next point instead of its own. A concrete offset is stricter; see
+	// WithOffset.
+	if c.Period > 0 && c.Jitter > c.Period {
+		errs.Addf("jitter must be <= period (%v)", c.Period)
+	}
 
 	return errs.Err()
 }

@@ -1,74 +1,65 @@
-// Package beat runs a single background Job on a schedule: on an interval
-// ("@every 5s") or a cron expression ("*/5 * * * * *"), optionally after a start
-// hook, bounded by a per-run timeout, wrapped by a chain of Middleware. Build a
-// Beat with [MakeBeat] and drive it with Start/Stop, or use the beat/beatfx
-// subpackage to wire it into an Uber Fx application.
-//
-// One Beat runs one Job. beat is single-instance per application: a process that
-// needs two schedules is two processes, which is also how a deployment scales
-// and stops them independently.
-//
-// # The job and its record
-//
-// A Job reports how much it processed and whether it failed:
-//
-//	type Job func(context.Context) (int, error)
-//
-// beat has no built-in metrics. After every run it hands a [Record] - iteration,
-// start, duration, processed, error, scheduling mode - to a [Handler], the same
-// way slog hands a Record to its handler. Metrics, logging and tracing are
-// adapters the caller supplies; [MultiHandler] sends one record to several.
-// github.com/uchaloop/otelbeat is such an adapter for OpenTelemetry.
+// Package beat schedules one Job in a long-lived process. Job calls are
+// sequential within a Beat. The package accepts configuration and emits Records;
+// it does not load configuration, export telemetry, or coordinate replicas.
 //
 // # Scheduling
 //
-// An "@every" interval measures the gap from the end of one run to the start of
-// the next, so the effective period grows by the Job's duration. A cron spec
-// fires at fixed wall-clock points and skips a point a long run overruns - it
-// never queues catch-up runs.
+// ModeFixedRate is the default: targets lie on an absolute grid of Period since
+// the Unix epoch, shifted by an offset. The first target is strictly after
+// startup. After each run, unavailable points are bypassed without queuing runs.
+// If a pending target is already past when the loop wakes, it runs once at once.
+// ModeFixedDelay starts after the initial offset, then waits at least Period
+// from the end of each Job. Only fixed-rate mode preserves the grid offset.
 //
-// Config.Jitter delays the first interval run, or every cron tick, by a random
-// amount drawn once from [0, Jitter). Replicas of one deployment read identical
-// configuration, so a fixed offset could not stagger them; the draw is what
-// does.
+// Config.Jitter draws an offset once in [0, Jitter); zero disables it.
+// WithOffset supplies an explicit offset and OffsetFor derives one from an
+// identity. Offsets spread starts but do not guarantee separation or ownership
+// of work. The application owns queue claiming and idempotency.
 //
-// Every run is bounded by Config.JobTimeout, one minute unless set, so a Job
-// that ignores its context cannot silently wedge the loop.
+// WithBackoff sets a minimum pause from Job completion, outside JobTimeout and
+// Record.Duration. It cannot shorten the configured schedule. Non-positive
+// values add no pause. Backoff callbacks and Handlers execute inline.
 //
-// # Configuration
+// # Jobs and records
 //
-// Config is a plain struct with env tags that beat itself never reads. An
-// application loads it - typically through github.com/uchaloop/confmaker, under
-// the prefix it gives the instance - and supplies the filled value:
+// Job returns a processed count and an error. JobTimeout defaults to one minute
+// and cancels the Job context; it cannot interrupt a function. Jobs must observe
+// cancellation and join their own goroutines before returning.
 //
-//	SPEC          the schedule; declared notEmpty, so a deployment that forgets
-//	              it is told which variable is missing before anything is built
-//	JOB_TIMEOUT   bounds one run; one minute from Config.SetDefaults
-//	JITTER        the upper bound of the start delay; zero disables it
+// Handler receives a Record after each completed Job. Duration includes Job
+// middleware, but not Handler or backoff. Outcome is authoritative even when Err
+// is nil. Missed carries previously computed unintentional grid losses, excluding
+// backoff; it is always zero in fixed-delay mode. Delivery waits for the next
+// completed Job, so the final losses can go unreported. A single Record cannot
+// identify their cause. Handler gets a context without cancellation or deadline;
+// keep it short and bound any I/O separately. MultiHandler calls sinks in order.
 //
-// A Config built in Go by hand never goes through SetDefaults, which is why
-// MakeBeat treats a zero JobTimeout as the default too.
+// # Lifecycle
 //
-// # Options and middleware
+// MakeBeat builds a runner; Start calls OnStart and launches its loop. Start's
+// context bounds startup only. A second Start fails; a stopped Beat cannot be
+// restarted. Call Stop explicitly to stop scheduling and cancel the active Job,
+// or use WithGracefulStop to drain within Stop's context. JobTimeout still applies.
 //
-// [WithMiddleware], [WithHandler], [WithOnStart], [WithOnStop] and
-// [WithGracefulStop] configure what a Config cannot carry. Middleware wraps the
-// Job:
+// Stop calls OnStop only after startup succeeded and the loop ended. If waiting
+// expires first, it returns ErrStillRunning with the context error and skips
+// OnStop permanently. Done closes when startup/loop activity has ended, not when
+// OnStop has completed. Use Done for fallback cleanup only after ErrStillRunning.
+// Concurrent Stop callers share the first result unless their own wait expires.
 //
-//	type Middleware func(next Job) Job
+// A failing OnStart is responsible for its partial cleanup; OnStop is not run.
+// If OnStart succeeds but startup's context is cancelled, Start initiates cleanup
+// with a fresh 15-second context unless concurrent Stop already owns cleanup.
+// All hooks run synchronously and must respect their contexts.
 //
-// In WithMiddleware(a, b, c) the first is outermost, so it is the order the
-// wrapping reads in. Three are provided: beat/middleware/recovery,
-// beat/middleware/idle and beat/middleware/batch.
+// # Integration
 //
-// Shutdown cancels the running job by default. WithGracefulStop lets it finish
-// instead, within whatever stop timeout the application allows.
+// The beatfx package connects the runner to Fx. The recovery middleware catches
+// panics in the wrapped Job call as PanicError; panics otherwise propagate.
+// It does not recover Handler, hook, backoff, or child-goroutine panics.
+// github.com/uchaloop/otelbeat implements Handler for OpenTelemetry metrics.
 //
-// # Panics
-//
-// The core does not recover them. A panic in the Job, or in a Handler,
-// propagates and crashes the process with a full stack on stderr - the honest
-// default for user code that misbehaves, and one that a supervisor restarts. To
-// keep the scheduler alive instead, add beat/middleware/recovery, which reports
-// the panic as a [PanicError] on the Record.
+// beat supports frequent polling with reusable process state. It provides no
+// calendar scheduling, persistence, replay after downtime, or delivery guarantee
+// for business work. See the README for diagrams and usage examples.
 package beat
