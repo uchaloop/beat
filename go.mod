@@ -3,6 +3,7 @@ module github.com/uchaloop/beat
 go 1.27
 
 require (
+	github.com/uchaloop/job v0.1.0
 	github.com/uchaloop/validate v0.1.0
 	go.uber.org/fx v1.24.0
 )

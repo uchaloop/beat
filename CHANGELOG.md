@@ -2,6 +2,74 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-20
+
+Execution moved out to github.com/uchaloop/job, so one attempt means the same
+whether a scheduler or a one-shot process runs it. beat keeps the schedule.
+
+### Breaking changes
+
+- `MakeBeat` takes a `*job.Runner` instead of a `Job` and a `Handler`. The work,
+  its middleware and its timeout are configured on the runner; supply a Handler
+  with `WithHandler`.
+- `Config.JobTimeout` is gone, and with it `BEAT_JOB_TIMEOUT`. The bound belongs
+  to `job.Config` and is read as `JOB_TIMEOUT`.
+- `Job`, `Middleware`, `WithMiddleware`, `Outcome`, `PanicError` and
+  `beat/middleware/recovery` moved to job and `job/middleware/recovery`.
+- `Record` carries the attempt under `Result`: `record.Result.Duration`,
+  `record.Result.Outcome`, `record.Result.Processed`, `record.Result.Err`.
+
+### Added
+
+- `WithAssignment` and `WithDecisionHandler`: an optional cluster rotation from
+  `job/assignment` picks one cluster to own each grid point, and all of its
+  replicas run it. Off by default, requires `ModeFixedRate` and the same Period.
+  A point owned elsewhere produces no run, no Record, no backoff and no missed
+  point, so `WithDecisionHandler` is the only way to observe those decisions.
+- `Record.GridPoint`, the shared grid point before the per-replica offset. It
+  is what every replica and cluster agrees on, and therefore what the rotation
+  decides over - an offset staggers replicas, it must not move a point to
+  another cluster.
+- `Record.LocalPeriod`, the spacing of the points this process is responsible
+  for: `N * Period` under a rotation, `Period` without one. A handler reporting
+  how much of its schedule the work uses divides by this, not by `Period`, or it
+  overstates the load by the number of clusters.
+
+### Fixed
+
+- A backoff asked for after an attempt that never ran is no longer dropped. The
+  runner reports a zero Start when the caller's context was already done, and
+  adding a duration to that yielded a timestamp from year one, which no backoff
+  could ever push past. Only a shutdown reaches it today, but the schedule is no
+  longer handed a meaningless point.
+- A graceful stop no longer lets a new attempt begin. Scheduling was checked
+  before the wait but not again after the decision handler, which is application
+  code and may take as long as it likes, so a Stop landing inside it was followed
+  by a fresh attempt - the opposite of what a graceful stop promises.
+
+  Whether an attempt may begin is now decided under the mutex Stop moves the
+  lifecycle state with, so an attempt is either accepted before the stop - and a
+  graceful stop then lets it finish - or refused after it. A context check could
+  not promise that: a Stop landing between the check and the call would still
+  have been followed by a fresh attempt. The mutex is not held for the work.
+
+### Changed
+
+- `MakeBeat` rejects a `WithDecisionHandler` given without `WithAssignment`.
+  Without a rotation there are no decisions, so the handler could never fire;
+  that is a configuration mistake rather than a quiet no-op.
+- `beatfx` asks the application to stop when the loop ends without being asked
+  to, with `fx.ExitCode(1)`. A scheduler whose loop has left has nothing further
+  to do, and a daemon that looks healthy while its queue goes unserved is worse
+  than one that exits. It is a request: `app.Run()` answers it, while an
+  application driving the lifecycle by hand must wait on `app.Wait()` and call
+  `Stop`. The stop runs the OnStop hook, so the loop's error still reaches the
+  application through `Stop` the ordinary way.
+- A loop that cannot carry on - a rotation that cannot decide a point - ends
+  scheduling, closes `Done` and leaves its error for `Stop` to report. `Done`
+  therefore closes for two reasons now: a Stop you called, and a loop that
+  stopped by itself.
+
 ## [0.4.0] - 2026-09-18
 
 ### Breaking changes
@@ -60,7 +128,8 @@
   standalone and Fx lifecycles, cooperative timeouts and graceful stop.
 - Added recovery, idle and batch middleware, plus MultiHandler.
 
-[Unreleased]: https://github.com/uchaloop/beat/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/uchaloop/beat/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/uchaloop/beat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/uchaloop/beat/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/uchaloop/beat/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/uchaloop/beat/compare/v0.3.0...v0.3.1

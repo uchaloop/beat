@@ -9,17 +9,16 @@ import (
 // Config is the configuration beat declares. The env tags are inert strings: an
 // application loads them with github.com/uchaloop/confmaker and provides the
 // filled Config into the container. beat itself never reads the environment.
+//
+// The timeout of one attempt is not here: it belongs to the job.Runner beat
+// drives, and lives in job.Config, so the same work carries the same bound
+// whether a scheduler or a one-shot process runs it.
 type Config struct {
-	// Period is how often the Job runs. Under ModeFixedRate it is the spacing
+	// Period is how often the work runs. Under ModeFixedRate it is the spacing
 	// of the grid the runs sit on; under ModeFixedDelay it is the pause between
 	// the end of one run and the start of the next. The deployment has to
 	// supply it: there is no period that makes sense for every job.
 	Period time.Duration `env:"PERIOD,notEmpty"`
-
-	// JobTimeout cancels a run's context after this duration. Zero selects one
-	// minute. Cancellation is cooperative: Job must return and join its own
-	// goroutines. A longer timeout can allow a run to cover multiple grid points.
-	JobTimeout time.Duration `env:"JOB_TIMEOUT"`
 
 	// Jitter is the upper bound of the random offset that staggers replicas so
 	// they do not all fire at once. The draw is half-open, [0, Jitter), and
@@ -36,12 +35,6 @@ type Config struct {
 	Jitter time.Duration `env:"JITTER"`
 }
 
-// SetDefaults sets JobTimeout to one minute. Configuration loaders call it
-// before applying input. MakeBeat also defaults a zero JobTimeout.
-func (c *Config) SetDefaults() {
-	c.JobTimeout = defaultJobTimeout
-}
-
 // ConfigName is the default instance name, "beat": a loader such as confmaker
 // reads BEAT_PERIOD and the rest of BEAT_* unless the application names the
 // instance itself.
@@ -55,7 +48,6 @@ func (c Config) Validate() error {
 	var errs validate.Errors
 
 	errs.Require(c.Period > 0, "period must be > 0")
-	errs.Require(c.JobTimeout >= 0, "job_timeout must be >= 0")
 	errs.Require(c.Jitter >= 0, "jitter must be >= 0")
 
 	// Jitter bounds a half-open draw, so a jitter equal to the period still

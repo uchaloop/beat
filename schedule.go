@@ -7,30 +7,6 @@ import (
 	"time"
 )
 
-// Mode selects how the start of one run relates to the next.
-type Mode string
-
-const (
-	// ModeFixedRate starts runs on an absolute grid: every Period since the
-	// Unix epoch, shifted by the offset. The cadence does not depend on how
-	// long a run takes, so two processes that share a Period agree on the
-	// points without sharing anything else - which is what lets a per-replica
-	// offset hold them apart for as long as they live.
-	//
-	// Runs still never overlap. A run that outlives its period covers the
-	// points it ran through, and they are reported as Record.Missed rather
-	// than queued for later.
-	ModeFixedRate Mode = "fixed_rate"
-
-	// ModeFixedDelay starts the next run one Period after the previous one
-	// ended, so a slow run pushes the whole schedule back. Use it for a job
-	// that should rest between runs rather than keep a cadence.
-	//
-	// There is no grid, so nothing is ever missed and an offset only delays
-	// the first run: the phase follows the job's duration and is not held.
-	ModeFixedDelay Mode = "fixed_delay"
-)
-
 // schedule decides when each run starts. It never reads the clock - every input
 // is a parameter. That keeps the whole timing policy in one place and lets it
 // be tested against a table instead of against timers.
@@ -116,9 +92,24 @@ func (s schedule) nextGridPoint(now time.Time) time.Time {
 	return time.Unix(0, (k+1)*int64(s.period)).Add(s.offset)
 }
 
-// wait blocks for d or until ctx is done, whichever comes first. A non-positive
+// sharedGridPoint reports the shared grid point a target belongs to: the target
+// without this replica's offset. It is what every replica and every cluster
+// agrees on, and therefore the only thing a cluster rotation may decide over -
+// an offset staggers replicas, it must not move a point to another cluster.
+//
+// A fixed-delay schedule has no shared grid, so its target is its own nominal
+// point and means nothing to anyone else.
+func (s schedule) sharedGridPoint(target time.Time) time.Time {
+	if s.mode == ModeFixedDelay {
+		return target
+	}
+
+	return target.Add(-s.offset)
+}
+
+// waitFor blocks for d or until ctx is done, whichever comes first. A non-positive
 // d returns immediately.
-func wait(ctx context.Context, d time.Duration) {
+func waitFor(ctx context.Context, d time.Duration) {
 	if d <= 0 {
 		return
 	}
