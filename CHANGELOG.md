@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-20
+
+- Document and verify job.ErrorHandler integration: scheduling and backoff use
+  total attempt duration; cluster rotation counts only locally owned missed
+  points, and shutdown waits for error processing before cleanup.
+
+- **Breaking:** the Fx adapter now lives in `github.com/uchaloop/beatfx`.
+  Use that independent module; this repository contains only the core library.
+- Updated documentation and CI for independent core and adapter releases.
+
 ## [0.5.0] - 2026-09-20
 
 Execution moved out to github.com/uchaloop/job, so one attempt means the same
@@ -128,7 +138,7 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
   standalone and Fx lifecycles, cooperative timeouts and graceful stop.
 - Added recovery, idle and batch middleware, plus MultiHandler.
 
-[Unreleased]: https://github.com/uchaloop/beat/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/uchaloop/beat/compare/v0.6.0...HEAD
 [0.5.0]: https://github.com/uchaloop/beat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/uchaloop/beat/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/uchaloop/beat/compare/v0.3.1...v0.3.2
@@ -138,3 +148,5 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
 [0.1.2]: https://github.com/uchaloop/beat/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/uchaloop/beat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0
+
+[0.6.0]: https://github.com/uchaloop/beat/compare/v0.5.0...v0.6.0

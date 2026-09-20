@@ -40,7 +40,7 @@ const (
 // the attempt and means the same in a one-shot process; everything beside it
 // belongs to the schedule and exists only here.
 type Record struct {
-	// Result is what the attempt itself reported: duration, count, error and
+	// Result includes work and optional error processing: durations, count, errors and
 	// outcome. See job.Result.
 	Result job.Result
 

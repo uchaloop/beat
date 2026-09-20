@@ -761,8 +761,8 @@ func TestStop_GracefulDuringTheDecisionHandlerStartsNoWork(t *testing.T) {
 	stopped := make(chan error, 1)
 	go func() { stopped <- b.Stop(context.Background()) }()
 
-	time.Sleep(50 * time.Millisecond) // let Stop cancel scheduling
-	close(release)                    // the handler returns
+	<-b.loopCtx.Done() // Stop has actually cancelled scheduling.
+	close(release)     // The handler returns.
 
 	if err := <-stopped; err != nil {
 		t.Fatalf("Stop: %v", err)
