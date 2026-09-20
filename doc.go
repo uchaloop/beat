@@ -23,8 +23,8 @@
 // the process. It spreads load and guards nothing: queue claiming and
 // idempotency belong to the application.
 //
-// WithBackoff sets a minimum pause from the end of the work, outside the job
-// timeout and outside Result.Duration. It cannot shorten the configured
+// WithBackoff sets a minimum pause after the complete attempt, including any
+// job.ErrorHandler. The pause is outside timeouts and Result.Duration. It cannot shorten the configured
 // schedule, and the points it holds back are not counted as losses.
 //
 // # Running in several clusters

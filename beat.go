@@ -63,7 +63,7 @@ const (
 )
 
 // Beat runs one job.Runner on a schedule. Build it with MakeBeat and drive it
-// with Start and Stop; the beatfx subpackage does that from the Fx lifecycle.
+// with Start and Stop; the separate beatfx module does that from the Fx lifecycle.
 //
 // It keeps two independent contexts: loopCtx gates scheduling (cancelled to stop
 // launching new runs) and workCtx is the parent of each run (cancelled to
@@ -114,7 +114,7 @@ type Beat struct {
 // required and carries the work, its middleware and its timeout; handler may be
 // supplied with WithHandler, and a no-op is used without it.
 //
-// Drive the returned Beat with Start and Stop; the beatfx subpackage does this
+// Drive the returned Beat with Start and Stop; the separate beatfx module does this
 // from the Fx lifecycle.
 func MakeBeat(cfg Config, runner *job.Runner, opts ...Option) (*Beat, error) {
 	if runner == nil {

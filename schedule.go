@@ -35,7 +35,7 @@ func (s schedule) firstTarget(now time.Time) time.Time {
 // and how many grid points went by unserved in the meantime.
 //
 // now is when scheduling resumes after Handler and the backoff callback.
-// jobEnd is when the Job returned, and backoff is the pause WithBackoff asked for
+// jobEnd is when the Runner returned, including error processing; backoff is the pause
 // after it, measured from jobEnd.
 func (s schedule) nextTarget(now, target, jobEnd time.Time, backoff time.Duration) (time.Time, int) {
 	notBefore := now
