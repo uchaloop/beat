@@ -4,25 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
+
+	"github.com/uchaloop/job"
+	"github.com/uchaloop/job/assignment"
 )
 
 const (
-	// defaultJobTimeout bounds a single run when the effective JobTimeout is
-	// unset (<= 0). Every run is bounded, so a Job that respects its context
-	// cannot wedge the loop; see the package documentation on what the bound
-	// does and does not promise.
-	defaultJobTimeout = time.Minute
-
 	// startupCleanupTimeout gives rollback a fresh, cooperative budget when
-	// OnStart succeeds after its startup context has been cancelled.
+	// OnStart succeeded but the startup context was cancelled before the loop
+	// could be launched.
 	startupCleanupTimeout = 15 * time.Second
 
-	// maxClockRecheckInterval bounds one sleep so the loop re-reads the clock at least this
-	// often. A fixed-rate schedule aims at a wall-clock point, so a clock that
-	// moved under a running process would otherwise go unnoticed until the
-	// sleep ended, however long that was.
+	// maxClockRecheckInterval bounds one sleep so the loop re-reads the clock at
+	// least this often. A fixed-rate schedule aims at a wall-clock point, so a
+	// clock that moved under a running process would otherwise go unnoticed
+	// until the sleep ended, however long that was.
 	//
 	// This bounds how long such a discrepancy goes unnoticed while the process
 	// runs. It is not a promise to recover within 30 seconds of a suspended
@@ -43,17 +42,16 @@ var (
 	// Beat is not restartable - build a new one with MakeBeat.
 	ErrStopped = errors.New("beat is stopped")
 
-	// ErrStillRunning reports that startup or the run loop had not finished
-	// when Stop stopped waiting. In-flight Job contexts are cancelled; an
-	// in-progress OnStart still follows the context supplied to Start.
-	// OnStop is not run in that case, and [Beat.Done] is how
+	// ErrStillRunning reports that Stop returned before the run did: the run
+	// was cancelled, but had not returned by the time the stop deadline
+	// elapsed. The OnStop hook is not run in that case, and [Beat.Done] is how
 	// an application learns when the run finally ends.
 	ErrStillRunning = errors.New("stop deadline elapsed before the run finished")
 )
 
-// lifecycleState is the lifecycle of one Beat. It only moves forward: a stopped Beat
-// stays stopped, because reviving cancelled contexts is more surprising than
-// building a new Beat.
+// lifecycleState is the lifecycle of one Beat. It only moves forward: a stopped
+// Beat stays stopped, because reviving cancelled contexts is more surprising
+// than building a new Beat.
 type lifecycleState int
 
 const (
@@ -64,52 +62,40 @@ const (
 	stateStopped
 )
 
-// PanicError wraps a value recovered from a panic in the Job. The recovery
-// middleware returns it as the run error, so a Handler can tell a panic from an
-// ordinary error - Record.Outcome reads OutcomePanic - and inspect the
-// recovered value and its stack. The beat core does not recover panics; without
-// the recovery middleware a panic crashes the process (with a stack on stderr).
-type PanicError struct {
-	Value any
-	Stack []byte
-}
-
-func (e *PanicError) Error() string {
-	return fmt.Sprintf("recovered from panic: %v", e.Value)
-}
-
-// Beat is a scheduled runner for one Job. Build it with MakeBeat and drive it
+// Beat runs one job.Runner on a schedule. Build it with MakeBeat and drive it
 // with Start and Stop; the beatfx subpackage does that from the Fx lifecycle.
 //
 // It keeps two independent contexts: loopCtx gates scheduling (cancelled to stop
-// launching new runs) and jobParentCtx parents each run (cancelled to abort
-// an in-flight run). Splitting them lets stop drain - end scheduling while
+// launching new runs) and workCtx is the parent of each run (cancelled to
+// abort an in-flight run). Splitting them lets stop drain - end scheduling while
 // letting the current run finish - or cancel, depending on the graceful flag.
 type Beat struct {
 	loopCtx    context.Context
 	loopCancel context.CancelFunc
-
-	jobParentCtx context.Context
-	jobCancel    context.CancelFunc
+	workCtx    context.Context
+	workCancel context.CancelFunc
 
 	graceful bool
 
-	job     Job
+	runner  *job.Runner
 	handler Handler
 	backoff func(Record) time.Duration
 
-	schedule schedule
+	schedule    schedule
+	localPeriod time.Duration
 
-	jobTimeout time.Duration
+	rotation   *assignment.Rotation
+	onDecision func(assignment.Decision)
 
 	onStart func(context.Context) error
 	onStop  func(context.Context) error
 
-	// mu guards the lifecycle state and the result Stop leaves behind for any
-	// later caller.
+	// mu guards the lifecycle state, the result Stop leaves behind for any
+	// later caller, and the error a loop that stopped by itself left.
 	mu               sync.Mutex
 	state            lifecycleState
 	stopErr          error
+	loopErr          error
 	startupSucceeded bool
 
 	// loopDone closes when no run is in flight and none ever will be. stopDone
@@ -117,7 +103,6 @@ type Beat struct {
 	// result rather than run the hook again.
 	loopDone     chan struct{}
 	loopDoneOnce sync.Once
-
 	stopDone     chan struct{}
 	stopDoneOnce sync.Once
 
@@ -125,15 +110,18 @@ type Beat struct {
 	iteration int64
 }
 
-// MakeBeat resolves cfg against opts and builds a Beat. job is required; handler
-// may be nil (a no-op handler is used). Drive the returned Beat with Start and
-// Stop; the beatfx subpackage does this from the Fx lifecycle.
-func MakeBeat(cfg Config, job Job, handler Handler, opts ...Option) (*Beat, error) {
-	if job == nil {
-		return nil, errors.New("job is required")
+// MakeBeat resolves cfg against opts and builds a Beat around runner. runner is
+// required and carries the work, its middleware and its timeout; handler may be
+// supplied with WithHandler, and a no-op is used without it.
+//
+// Drive the returned Beat with Start and Stop; the beatfx subpackage does this
+// from the Fx lifecycle.
+func MakeBeat(cfg Config, runner *job.Runner, opts ...Option) (*Beat, error) {
+	if runner == nil {
+		return nil, errors.New("runner is required")
 	}
 
-	s := settings{handler: handler, mode: ModeFixedRate}
+	s := settings{mode: ModeFixedRate}
 	for _, o := range opts {
 		if o != nil {
 			o.apply(&s)
@@ -159,9 +147,13 @@ func MakeBeat(cfg Config, job Job, handler Handler, opts ...Option) (*Beat, erro
 		return nil, fmt.Errorf("offset %v must be in [0, period %v)", offset, cfg.Period)
 	}
 
-	jobTimeout := cfg.JobTimeout
-	if jobTimeout <= 0 {
-		jobTimeout = defaultJobTimeout
+	if s.rotation == nil && s.onDecision != nil {
+		return nil, errors.New("a decision handler needs WithAssignment: without a rotation there are no decisions")
+	}
+
+	localPeriod, err := localPeriodFor(cfg.Period, s.mode, s.rotation)
+	if err != nil {
+		return nil, err
 	}
 
 	if s.handler == nil {
@@ -169,23 +161,25 @@ func MakeBeat(cfg Config, job Job, handler Handler, opts ...Option) (*Beat, erro
 	}
 
 	loopCtx, loopCancel := context.WithCancel(context.Background())
-	jobParentCtx, jobCancel := context.WithCancel(context.Background())
+	workCtx, workCancel := context.WithCancel(context.Background())
 
 	return &Beat{
-		loopCtx:      loopCtx,
-		loopCancel:   loopCancel,
-		jobParentCtx: jobParentCtx,
-		jobCancel:    jobCancel,
+		loopCtx:    loopCtx,
+		loopCancel: loopCancel,
+		workCtx:    workCtx,
+		workCancel: workCancel,
 
 		graceful: s.graceful,
 
-		job:     chain(job, s.middleware),
+		runner:  runner,
 		handler: s.handler,
 		backoff: s.backoff,
 
-		schedule: schedule{mode: s.mode, period: cfg.Period, offset: offset},
+		schedule:    schedule{mode: s.mode, period: cfg.Period, offset: offset},
+		localPeriod: localPeriod,
 
-		jobTimeout: jobTimeout,
+		rotation:   s.rotation,
+		onDecision: s.onDecision,
 
 		onStart: s.onStart,
 		onStop:  s.onStop,
@@ -193,6 +187,30 @@ func MakeBeat(cfg Config, job Job, handler Handler, opts ...Option) (*Beat, erro
 		loopDone: make(chan struct{}),
 		stopDone: make(chan struct{}),
 	}, nil
+}
+
+// localPeriodFor reports the spacing of the points this process is responsible
+// for, and rejects a rotation that cannot describe the same grid the schedule
+// does.
+func localPeriodFor(period time.Duration, mode Mode, rotation *assignment.Rotation) (time.Duration, error) {
+	if rotation == nil {
+		return period, nil
+	}
+
+	if mode != ModeFixedRate {
+		return 0, fmt.Errorf("a cluster rotation needs %q: %q has no shared grid to rotate over", ModeFixedRate, mode)
+	}
+
+	if rotation.Period() != period {
+		return 0, fmt.Errorf("rotation period %v does not match beat period %v", rotation.Period(), period)
+	}
+
+	clusters := int64(rotation.ClusterCount())
+	if clusters > int64(math.MaxInt64)/int64(period) {
+		return 0, fmt.Errorf("period %v across %d clusters is not representable", period, clusters)
+	}
+
+	return time.Duration(clusters) * period, nil
 }
 
 // Start runs the OnStart hook and launches the run loop. The loop runs in its
@@ -231,7 +249,7 @@ func (b *Beat) Start(ctx context.Context) error {
 	if b.state != stateStarting {
 		// Stop owns its result and stopDone, even if startup fails meanwhile.
 		b.mu.Unlock()
-		b.signalLoopDone()
+		b.closeLoopDone()
 
 		return errors.Join(startupErr, ctx.Err(), ErrStopped)
 	}
@@ -239,9 +257,9 @@ func (b *Beat) Start(ctx context.Context) error {
 	if startupErr != nil {
 		b.state = stateStopped
 		b.loopCancel()
-		b.jobCancel()
-		b.signalLoopDone()
-		b.signalStopDone()
+		b.workCancel()
+		b.closeLoopDone()
+		b.closeStopDone()
 		b.mu.Unlock()
 
 		return startupErr
@@ -252,7 +270,7 @@ func (b *Beat) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		// The hook completed, so its resources need the paired cleanup even if
 		// the caller never calls Stop after this failed Start.
-		b.signalLoopDone()
+		b.closeLoopDone()
 		b.mu.Unlock()
 
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startupCleanupTimeout)
@@ -262,7 +280,7 @@ func (b *Beat) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		defer b.signalLoopDone()
+		defer b.closeLoopDone()
 
 		b.runLoop()
 	}()
@@ -280,8 +298,11 @@ func (b *Beat) Start(ctx context.Context) error {
 // If ctx elapses while a run is still going, Stop cancels the run, returns
 // [ErrStillRunning] joined with ctx's error, and does not run the OnStop hook:
 // the hook is documented to run after the loop has stopped, and running it
-// against a Job that is still working would race it for the very resources the
+// against work that is still going would race it for the very resources the
 // hook exists to release. [Beat.Done] reports when the run finally ends.
+//
+// A loop that stopped by itself - a cluster rotation that could not decide a
+// point - leaves its error here, joined with whatever the hook reports.
 //
 // Stop is safe to call more than once and from several goroutines: the first
 // call does the work, and the others report its result without running the hook
@@ -299,8 +320,8 @@ func (b *Beat) Stop(ctx context.Context) error {
 		b.state = stateStopped
 		b.mu.Unlock()
 
-		b.signalLoopDone()
-		b.signalStopDone()
+		b.closeLoopDone()
+		b.closeStopDone()
 
 		return nil
 
@@ -313,42 +334,42 @@ func (b *Beat) Stop(ctx context.Context) error {
 	b.state = stateStopping
 	b.mu.Unlock()
 
-	err := b.finishStop(ctx)
+	err := b.shutdown(ctx)
 
 	b.mu.Lock()
 	b.stopErr = err
 	b.state = stateStopped
 	b.mu.Unlock()
 
-	b.signalStopDone()
+	b.closeStopDone()
 
 	return err
 }
 
-// Done returns a channel that closes when the run loop has left and no Job is
+// Done returns a channel that closes when the run loop has left and no work is
 // in flight - or, for a Beat that never started, as soon as it is stopped.
 //
-// Stop returns on its own deadline and may return first, because a job timeout
-// cancels a run's context but cannot interrupt it. This is how an application
-// learns that the run has finally ended, so it can release, after the fact, a
-// resource the Job was still using. Done does not wait for OnStop. Only use it
-// for fallback cleanup after Stop returned ErrStillRunning; otherwise cleanup
-// could overlap with OnStop.
+// It closes for two reasons: a Stop you called, and a loop that ended by
+// itself after an error it cannot recover from. Stop returns on its own
+// deadline and may return first, because a job timeout cancels an attempt's
+// context but cannot interrupt it. Watch this to learn that the run finally
+// ended - so a resource the work was still using can be released - or that a
+// loop stopped without being asked to, in which case Stop reports why.
 func (b *Beat) Done() <-chan struct{} { return b.loopDone }
 
-// finishStop does the work of the first Stop: end scheduling, wait for the loop, and
-// run the hook only if the loop actually left.
-func (b *Beat) finishStop(ctx context.Context) error {
+// shutdown does the work of the first Stop: end scheduling, wait for the
+// loop, and run the hook only if the loop actually left.
+func (b *Beat) shutdown(ctx context.Context) error {
 	b.loopCancel()
 
 	if !b.graceful {
-		b.jobCancel()
+		b.workCancel()
 	}
 
 	select {
 	case <-b.loopDone:
 	case <-ctx.Done():
-		b.jobCancel()
+		b.workCancel()
 
 		// Completion wins if both notifications are already available.
 		select {
@@ -358,17 +379,18 @@ func (b *Beat) finishStop(ctx context.Context) error {
 		}
 	}
 
-	b.jobCancel()
+	b.workCancel()
 
 	b.mu.Lock()
 	startupSucceeded := b.startupSucceeded
+	loopErr := b.loopErr
 	b.mu.Unlock()
 
 	if !startupSucceeded {
-		return nil
+		return loopErr
 	}
 
-	return b.runOnStop(ctx)
+	return errors.Join(loopErr, b.runOnStop(ctx))
 }
 
 // awaitStopResult waits within this caller's budget. An already published result
@@ -390,14 +412,14 @@ func (b *Beat) awaitStopResult(ctx context.Context) error {
 	return b.stopErr
 }
 
-func (b *Beat) signalLoopDone() { b.loopDoneOnce.Do(func() { close(b.loopDone) }) }
+func (b *Beat) closeLoopDone() { b.loopDoneOnce.Do(func() { close(b.loopDone) }) }
 
-func (b *Beat) signalStopDone() { b.stopDoneOnce.Do(func() { close(b.stopDone) }) }
+func (b *Beat) closeStopDone() { b.stopDoneOnce.Do(func() { close(b.stopDone) }) }
 
-// runLoop runs until scheduling stops. It owns the timing: nothing below it - not
-// the Job, not a Middleware, not the Handler - decides when the next run
+// runLoop runs until scheduling stops. It owns the timing: nothing below it -
+// not the work, not a middleware, not the Handler - decides when the next run
 // happens, which is why a backoff is an option here rather than a pause taken
-// inside the Job.
+// inside the work.
 func (b *Beat) runLoop() {
 	target := b.schedule.firstTarget(time.Now())
 	missed := 0
@@ -407,26 +429,111 @@ func (b *Beat) runLoop() {
 			return
 		}
 
-		record := b.runOnce(target, missed)
+		decision, err := b.decide(target)
+		if err != nil {
+			b.endLoopWithError(err)
 
-		var backoff time.Duration
-		if b.backoff != nil {
-			backoff = b.backoff(record)
+			return
 		}
 
-		jobEnd := record.Start.Add(record.Duration)
-		target, missed = b.schedule.nextTarget(time.Now(), target, jobEnd, backoff)
+		// The last word on whether a new attempt may begin, taken under the
+		// mutex Stop moves the state with. Checking a cancelled context here
+		// would leave a window: a Stop landing between the check and the call
+		// would still be followed by a fresh attempt.
+		if !b.acceptsAttempt() {
+			return
+		}
+
+		jobEnd := time.Now()
+
+		var backoff time.Duration
+		if decision.Execute {
+			record := b.runAttempt(target, missed)
+			missed = 0
+
+			if b.backoff != nil {
+				backoff = b.backoff(record)
+			}
+
+			jobEnd = attemptEnd(record.Result)
+		}
+
+		next, skipped := b.schedule.nextTarget(time.Now(), target, jobEnd, backoff)
+		missed += b.ownedPointsSkipped(decision.Slot, skipped)
+		target = next
 	}
 }
 
-// sleepUntil waits for target, waking at least every maxClockRecheckInterval to re-read the
-// clock. It reports whether the run should still happen.
+// attemptEnd reports when the work stopped, for the backoff to measure from.
+//
+// A Result the runner never measured - the caller's context was already done,
+// so nothing ran - carries a zero Start. Adding a duration to that yields a
+// timestamp from year one, which would silently swallow any backoff asked for
+// on the way out. Today only a shutdown reaches here, and the loop leaves
+// straight after, but the schedule should never be handed a meaningless point.
+func attemptEnd(result job.Result) time.Time {
+	if result.Start.IsZero() {
+		return time.Now()
+	}
+
+	return result.Start.Add(result.Duration)
+}
+
+// decide asks the cluster rotation who owns the point behind target. Without a
+// rotation every point is this process's own.
+func (b *Beat) decide(target time.Time) (assignment.Decision, error) {
+	if b.rotation == nil {
+		return assignment.Decision{Execute: true}, nil
+	}
+
+	decision, err := b.rotation.Decide(assignment.Invocation{
+		ScheduledFor: b.schedule.sharedGridPoint(target),
+	})
+	if err != nil {
+		return assignment.Decision{}, err
+	}
+
+	if b.onDecision != nil {
+		b.onDecision(decision)
+	}
+
+	return decision, nil
+}
+
+// ownedPointsSkipped reports how many of the points passed over belonged to
+// this process. Without a rotation they all did.
+func (b *Beat) ownedPointsSkipped(slot int64, skipped int) int {
+	if b.rotation == nil {
+		return skipped
+	}
+
+	return b.rotation.OwnedBetween(slot, slot+int64(skipped))
+}
+
+// endLoopWithError records an error the loop cannot carry on past. Scheduling
+// ends, the error waits for Stop, and Done closes as the loop leaves.
+//
+// The lifecycle state is deliberately left alone: it belongs to Start and Stop,
+// and moving it from the loop would let a Beat reach stopped without anyone
+// having asked, which Stop and its result channel are built around. So between
+// a loop that ended by itself and the Stop that follows, the state still reads
+// running while nothing is running - Done is what tells them apart.
+func (b *Beat) endLoopWithError(err error) {
+	b.mu.Lock()
+	b.loopErr = err
+	b.mu.Unlock()
+
+	b.loopCancel()
+}
+
+// sleepUntil waits for target, waking at least every maxClockRecheckInterval to
+// re-read the clock. It reports whether the run should still happen.
 //
 // A target already in the past returns at once, so a process that was away for a
 // while runs once against a stale point - the Record says so, with a large gap
-// between ScheduledFor and Start - and the run after it can follow soon. For
-// work that drains a queue that is the useful behaviour; catching up point by
-// point would not be.
+// between ScheduledFor and Result.Start - and the run after it can follow soon.
+// For work that drains a queue that is the useful behaviour; catching up point
+// by point would not be.
 func (b *Beat) sleepUntil(target time.Time) bool {
 	for {
 		if b.schedulingStopped() {
@@ -438,8 +545,21 @@ func (b *Beat) sleepUntil(target time.Time) bool {
 			return true
 		}
 
-		wait(b.loopCtx, min(d, maxClockRecheckInterval))
+		waitFor(b.loopCtx, min(d, maxClockRecheckInterval))
 	}
+}
+
+// acceptsAttempt reports whether a new attempt may begin.
+//
+// Stop moves the state to stopping under this same mutex, so an attempt is
+// either accepted before that - and a graceful stop then lets it finish - or
+// refused after it. There is no in between, which a context check could not
+// promise. The mutex is not held for the work itself.
+func (b *Beat) acceptsAttempt() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.state == stateRunning
 }
 
 func (b *Beat) schedulingStopped() bool {
@@ -451,61 +571,30 @@ func (b *Beat) schedulingStopped() bool {
 	}
 }
 
-// runOnce executes the Job once and reports the result to the Handler.
-func (b *Beat) runOnce(target time.Time, missed int) Record {
+// runAttempt performs one attempt and reports the result to the Handler.
+func (b *Beat) runAttempt(target time.Time, missed int) Record {
 	b.iteration++
 
-	// jobTimeout is always positive (MakeBeat defaults it), so every run is
-	// bounded - as far as a context can bound anything. See the package
-	// documentation: the deadline cancels the run, it does not interrupt it.
-	runCtx, cancel := context.WithTimeout(b.jobParentCtx, b.jobTimeout)
-	defer cancel()
-
-	start := time.Now()
-	processed, err := b.job(runCtx)
-	duration := time.Since(start)
+	result := b.runner.Run(b.workCtx)
 
 	record := Record{
+		Result:       result,
 		Iteration:    b.iteration,
+		GridPoint:    b.schedule.sharedGridPoint(target),
 		ScheduledFor: target,
-		Start:        start,
-		Duration:     duration,
 		Period:       b.schedule.period,
+		LocalPeriod:  b.localPeriod,
 		Mode:         b.schedule.mode,
-		Processed:    processed,
-		Err:          err,
-		Outcome:      outcomeOf(runCtx, err),
 		Missed:       missed,
 	}
 
 	// Deliver the Record with a context that is not cancelled, so the final run
 	// at shutdown still reaches a Handler that does ctx-bound work. beat does not
-	// recover the Job or the Handler: a panic propagates and crashes the process
-	// (with a stack on stderr) unless the recovery middleware is used.
-	b.handler.Handle(context.WithoutCancel(b.jobParentCtx), record)
+	// recover the work or the Handler: a panic propagates and crashes the process
+	// (with a stack on stderr) unless job/middleware/recovery is used.
+	b.handler.Handle(context.WithoutCancel(b.workCtx), record)
 
 	return record
-}
-
-// outcomeOf classifies a finished run. A panic outranks the rest because it is
-// a defect and always worth surfacing. The deadline and the shutdown outrank
-// the Job's own error because both mean the run was cut short, whatever it
-// managed to return on the way out.
-func outcomeOf(ctx context.Context, err error) Outcome {
-	if _, ok := errors.AsType[*PanicError](err); ok {
-		return OutcomePanic
-	}
-
-	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return OutcomeTimeout
-	case errors.Is(ctx.Err(), context.Canceled):
-		return OutcomeCanceled
-	case err != nil:
-		return OutcomeError
-	}
-
-	return OutcomeOK
 }
 
 // runOnStart and runOnStop invoke hooks synchronously with their caller's

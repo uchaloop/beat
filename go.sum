@@ -4,6 +4,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
+github.com/uchaloop/job v0.1.0 h1:gvTqVQCLJZbBwqVL7UFvm4SHXWf4w6uMEDGnYyvuwTs=
+github.com/uchaloop/job v0.1.0/go.mod h1:E+tCAfCoiIRrHxd5HatK5F59Oljsfgan/6yhAgFgdTk=
 github.com/uchaloop/validate v0.1.0 h1:lwcnFtHl0Kyviz1vTOTmBWj5Xu5j+NC8yoLUt/eSHY8=
 github.com/uchaloop/validate v0.1.0/go.mod h1:6GbN7UKDj1ascOcC1JpCIMmPXvDC62c8Hm0yT/2Osbk=
 go.uber.org/dig v1.19.0 h1:BACLhebsYdpQ7IROQ1AGPjrXcP5dF80U3gKoFzbaq/4=

@@ -48,24 +48,36 @@ func main() {
         }
     }
     handler := beat.HandlerFunc(func(_ context.Context, r beat.Record) {
-        slog.Info("job completed", "outcome", r.Outcome,
-            "processed", r.Processed, "duration", r.Duration, "missed", r.Missed)
+        slog.Info("attempt completed", "outcome", r.Result.Outcome,
+            "processed", r.Result.Processed, "duration", r.Result.Duration,
+            "missed", r.Missed)
     })
-    runner, err := beat.MakeBeat(beat.Config{
-        Period: 5 * time.Second, JobTimeout: 2 * time.Second, Jitter: time.Second,
-    }, job, handler, beat.WithGracefulStop())
+
+    // The work, its middleware and its timeout belong to the runner.
+    runner, err := job.MakeRunner(job.Config{Timeout: 2 * time.Second}, work)
+    if err != nil {
+        slog.Error("configure runner", "error", err)
+        return
+    }
+
+    scheduler, err := beat.MakeBeat(
+        beat.Config{Period: 5 * time.Second, Jitter: time.Second},
+        runner,
+        beat.WithHandler(handler),
+        beat.WithGracefulStop(),
+    )
     if err != nil {
         slog.Error("configure beat", "error", err)
         return
     }
-    if err := runner.Start(shutdown); err != nil {
+    if err := scheduler.Start(shutdown); err != nil {
         slog.Error("start beat", "error", err)
         return
     }
     <-shutdown.Done()
     stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer stopCancel()
-    if err := runner.Stop(stopCtx); err != nil {
+    if err := scheduler.Stop(stopCtx); err != nil {
         slog.Error("stop beat", "error", err)
     }
 }
@@ -101,8 +113,10 @@ flowchart TD
     B --> C[Wait for target or stop request]
     C --> D{Stopping?}
     D -->|yes| Z[Exit loop and close Done]
-    D -->|no| E[Run middleware and Job with JobTimeout context]
-    E --> F[Build Record and call Handler inline]
+    D -->|no| E{Point owned here?}
+    E -->|no| H
+    E -->|yes| R[job.Runner.Run: middleware and work]
+    R --> F[Build Record and call Handler inline]
     F --> G[Evaluate backoff from Record]
     G --> H[Compute next target and Missed for the next Record]
     H --> C
@@ -121,17 +135,16 @@ tags support loaders such as confmaker, with default instance name `beat`.
 | Field | Default env name | Default | Constraint |
 |---|---|---|---|
 | `Period` | `BEAT_PERIOD` | Required | Greater than zero |
-| `JobTimeout` | `BEAT_JOB_TIMEOUT` | `1m` | Zero selects the default; negative values are invalid |
 | `Jitter` | `BEAT_JITTER` | `0` | Between zero and Period, inclusive |
 
-The timeout cancels the Job's context; it cannot interrupt the function. Jobs
-must respect cancellation and join their own goroutines before returning.
-A Job that never returns blocks subsequent runs and completion records.
+The attempt's timeout is not here: it belongs to the `job.Runner` beat drives,
+and is read as `JOB_TIMEOUT`. It cancels the work's context and cannot interrupt
+the function - work must respect cancellation and join its own goroutines before
+returning. Work that never returns blocks subsequent runs and their records.
 
-Options select the mode, offset, backoff, middleware, Handler and lifecycle
-hooks. Repeated setter options use the last value; `WithMiddleware` appends
-wrappers, with the first wrapper outermost. `WithHandler` overrides the Handler
-passed to `MakeBeat`. `WithGracefulStop` enables draining on shutdown.
+Options select the mode, offset, backoff, Handler, cluster rotation and
+lifecycle hooks. Repeated setter options use the last value. `WithGracefulStop`
+enables draining on shutdown. Middleware belongs to the Runner, not here.
 
 ### Polling with backoff
 
@@ -142,10 +155,10 @@ longer after an empty or partial batch:
 opts := []beat.Option{
     beat.WithMode(beat.ModeFixedDelay), // for example, Config.Period = 1s
     beat.WithBackoff(func(r beat.Record) time.Duration {
-        if r.Outcome != beat.OutcomeOK {
+        if r.Result.Outcome != job.OutcomeOK {
             return 30 * time.Second
         }
-        if r.Processed < 1000 {
+        if r.Result.Processed < 1000 {
             return 5 * time.Minute
         }
         return 0
@@ -210,8 +223,9 @@ I/O its own budget. `MultiHandler` calls sinks sequentially. For metrics, use
 
 - Start may run once. Repeated Start returns `ErrAlreadyStarted`; a stopped
   Beat returns `ErrStopped` and cannot be restarted.
-- Stop prevents further scheduling. Normally it cancels the active Job at once;
-  `WithGracefulStop` lets it finish within Stop's budget. JobTimeout still applies.
+- Stop prevents further scheduling. Normally it cancels the active attempt at
+  once; `WithGracefulStop` lets it finish within Stop's budget. The runner's own
+  timeout still applies.
 - Concurrent Stop callers share the first Stop's result, but each waiting caller
   may return early if its own context expires.
 - Stop waits for an in-progress OnStart. If OnStart fails, OnStop is not called;
@@ -223,9 +237,12 @@ I/O its own budget. `MultiHandler` calls sinks sequentially. For metrics, use
 - Otherwise OnStop runs synchronously after the loop exits. Hooks must respect
   their contexts; a blocked hook can outlive the supplied deadline.
 
-`Done()` closes after startup/run-loop activity finishes, **before OnStop**.
-Only use it for fallback cleanup after Stop reports ErrStillRunning. Bound any
-additional wait according to the application's shutdown policy:
+`Done()` closes after startup/run-loop activity finishes, **before OnStop**. It
+closes for two reasons: a `Stop` you called, and a loop that ended by itself
+after an error it cannot carry on past - `Stop` then reports that error. Use it
+for fallback cleanup after Stop reports `ErrStillRunning`, and to notice the
+second case early. Bound any additional wait according to the application's
+shutdown policy:
 
 ```go
 if errors.Is(stopErr, beat.ErrStillRunning) {
@@ -238,36 +255,74 @@ if errors.Is(stopErr, beat.ErrStillRunning) {
 }
 ```
 
+Under `beatfx` this is connected for you: a loop that ends by itself asks the Fx
+application to stop, with exit code 1, and its error surfaces through the OnStop
+hook. It is a **request** - `fx.Shutdowner` broadcasts a signal. An application
+using `app.Run()` receives it and stops; one driving the lifecycle by hand must
+wait on `app.Wait()` and call `Stop` itself, or the request goes unanswered.
+
 ## Fx and panic recovery
 
-Supply a Config, Job, optional Handler, and at most one ordered `beatfx.Options`
-value. Static options passed to Module come first, followed by container options:
+Supply a Config, a `*job.Runner`, an optional Handler, and at most one ordered
+`beatfx.Options` value. Static options passed to Module come first, followed by
+container options:
 
 ```go
 app := fx.New(
-    fx.Supply(beat.Config{Period: time.Minute, JobTimeout: 45 * time.Second}),
-    fx.Provide(func() beat.Job { return job }),
-    fx.Provide(func(log *slog.Logger) beatfx.Options {
-        return beatfx.Options{
-            beat.WithMiddleware(recovery.Middleware(recovery.WithLogger(log))),
-            beat.WithGracefulStop(),
-        }
-    }),
+    fx.Supply(beat.Config{Period: time.Minute}),
     fx.Supply(slog.Default()),
+
+    fx.Provide(func(log *slog.Logger) (*job.Runner, error) {
+        return job.MakeRunner(
+            job.Config{Timeout: 45 * time.Second},
+            work,
+            job.WithMiddleware(recovery.Middleware(recovery.WithLogger(log))),
+        )
+    }),
+
+    fx.Provide(func() beatfx.Options {
+        return beatfx.Options{beat.WithGracefulStop()}
+    }),
+
     beatfx.Module(),
     fx.StopTimeout(time.Minute),
 )
 app.Run()
 ```
 
-Here `job` is the application's `beat.Job`. Import `beat/beatfx`,
-`beat/middleware/recovery`, and `go.uber.org/fx` for this integration.
-Use one beatfx Module per Fx application. Independent standalone Beat objects
-have independent lifecycles.
+Here `work` is the application's `job.Func`. Import `beat/beatfx`,
+`github.com/uchaloop/job`, `job/middleware/recovery` and `go.uber.org/fx` for
+this integration. Use one beatfx Module per Fx application; independent
+standalone Beat objects have independent lifecycles.
 
 Panics propagate by default. Recovery middleware catches panics only inside the
-wrapped Job call and returns `*beat.PanicError`; it does not protect Handler,
-backoff, hooks, or goroutines created by the Job.
+wrapped work and returns `*job.PanicError`; it does not protect the Handler,
+the backoff callback, hooks, or goroutines the work created.
+
+## Running in several clusters
+
+`WithAssignment` adds an optional rotation from `job/assignment`: one cluster
+owns each grid point and all of its replicas run it, while the others skip. It
+is off by default, requires `ModeFixedRate` and must share `Config.Period`.
+
+```go
+rotation, err := assignment.MakeRotation(assignment.Config{
+    Clusters: []string{"el", "xc", "dm"},
+    Current:  os.Getenv("CLUSTER"),
+    Period:   5 * time.Minute,
+})
+```
+
+A point another cluster owns produces no run, no Record and no backoff, and is
+not counted as `Missed` - it was never this process's to serve. Use
+`WithDecisionHandler` to observe those decisions, since nothing else reports
+them. With N clusters `Record.LocalPeriod` is `N * Period`: three clusters on a
+five-minute period means each attempts every fifteen minutes.
+
+The rotation names an owner; it does not guarantee the owner runs. A cluster
+that is down leaves its points unserved, and no other cluster takes over - that
+would need shared state the policy deliberately does not have. Work must
+therefore survive a skipped attempt.
 
 [API reference](https://pkg.go.dev/github.com/uchaloop/beat) ·
 [Compilable examples](example_test.go) · [MIT license](LICENSE)

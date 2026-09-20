@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/uchaloop/job"
 )
 
 // hooks counts how often each lifecycle hook ran.
@@ -28,8 +30,8 @@ func TestStart_SecondCallDoesNotLaunchASecondLoop(t *testing.T) {
 		var h hooks
 		var live, peak atomic.Int64
 
-		b, err := MakeBeat(Config{Period: 100 * time.Millisecond, JobTimeout: time.Minute},
-			func(context.Context) (int, error) {
+		b, err := MakeBeat(Config{Period: 100 * time.Millisecond},
+			runnerFor(t, func(context.Context) (int, error) {
 				n := live.Add(1)
 				for {
 					p := peak.Load()
@@ -41,7 +43,7 @@ func TestStart_SecondCallDoesNotLaunchASecondLoop(t *testing.T) {
 				live.Add(-1)
 
 				return 0, nil
-			}, nil, h.options()...)
+			}), h.options()...)
 		if err != nil {
 			t.Fatalf("MakeBeat: %v", err)
 		}
@@ -69,7 +71,7 @@ func TestStart_SecondCallDoesNotLaunchASecondLoop(t *testing.T) {
 }
 
 func TestStart_AfterStopIsRefused(t *testing.T) {
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork))
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -86,7 +88,7 @@ func TestStart_AfterStopIsRefused(t *testing.T) {
 	}
 
 	// A Beat stopped without ever running refuses just the same.
-	fresh, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil)
+	fresh, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork))
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -102,7 +104,7 @@ func TestStart_ConcurrentCallsElectOneWinner(t *testing.T) {
 	const callers = 8
 
 	var h hooks
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil, h.options()...)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork), h.options()...)
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -137,7 +139,7 @@ func TestStart_ConcurrentCallsElectOneWinner(t *testing.T) {
 
 func TestStop_SecondCallReportsTheFirstResult(t *testing.T) {
 	var h hooks
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil, h.options()...)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork), h.options()...)
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -161,7 +163,7 @@ func TestStop_ConcurrentCallsRunTheHookOnce(t *testing.T) {
 	const callers = 8
 
 	var h hooks
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil, h.options()...)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork), h.options()...)
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -187,7 +189,7 @@ func TestStop_ConcurrentCallsRunTheHookOnce(t *testing.T) {
 
 func TestStop_NeverStartedRunsNoHook(t *testing.T) {
 	var h hooks
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil, h.options()...)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork), h.options()...)
 	if err != nil {
 		t.Fatalf("MakeBeat: %v", err)
 	}
@@ -210,7 +212,7 @@ func TestStart_FailingHookLeavesTheBeatStopped(t *testing.T) {
 	want := errors.New("no")
 
 	var stops atomic.Int64
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil,
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork),
 		WithOnStart(func(context.Context) error { return want }),
 		WithOnStop(func(context.Context) error { stops.Add(1); return nil }))
 	if err != nil {
@@ -238,14 +240,15 @@ func TestStart_FailingHookLeavesTheBeatStopped(t *testing.T) {
 
 // stillRunning is the shape shared by the two deadline tests: something in the
 // run - the Job in one, the Handler in the other - outlives the stop deadline.
-func stillRunning(t *testing.T, job Job, handler Handler) {
+func stillRunning(t *testing.T, fn job.Func, handler Handler) {
 	t.Helper()
 
 	synctest.Test(t, func(t *testing.T) {
 		var stops atomic.Int64
 
-		b, err := MakeBeat(Config{Period: 100 * time.Millisecond, JobTimeout: time.Minute},
-			job, handler,
+		b, err := MakeBeat(Config{Period: 100 * time.Millisecond},
+			runnerFor(t, fn),
+			WithHandler(handler),
 			WithOnStop(func(context.Context) error { stops.Add(1); return nil }))
 		if err != nil {
 			t.Fatalf("MakeBeat: %v", err)
@@ -295,7 +298,7 @@ func TestStop_DeadlineWithAHangingJob(t *testing.T) {
 }
 
 func TestStop_DeadlineWithASlowHandler(t *testing.T) {
-	stillRunning(t, noopJob, HandlerFunc(func(context.Context, Record) {
+	stillRunning(t, noopWork, HandlerFunc(func(context.Context, Record) {
 		time.Sleep(10 * time.Second)
 	}))
 }
@@ -313,11 +316,11 @@ func TestStop_DuringStartup(t *testing.T) {
 				startupErr, cleanupErr := errors.New("startup"), errors.New("cleanup")
 
 				var stops, jobs atomic.Int64
-				b, err := MakeBeat(Config{Period: time.Second}, func(context.Context) (int, error) {
+				b, err := MakeBeat(Config{Period: time.Second}, runnerFor(t, func(context.Context) (int, error) {
 					jobs.Add(1)
 
 					return 0, nil
-				}, nil,
+				}),
 					WithOnStart(func(context.Context) error {
 						close(entered)
 						<-release
@@ -384,7 +387,7 @@ func TestStart_CanceledAfterSuccessfulHookRollsBack(t *testing.T) {
 
 	var stops int
 	cleanupErr := errors.New("cleanup")
-	b, err := MakeBeat(Config{Period: time.Second}, noopJob, nil,
+	b, err := MakeBeat(Config{Period: time.Second}, runnerFor(t, noopWork),
 		WithOnStart(func(context.Context) error {
 			cancel()
 
@@ -417,7 +420,7 @@ func TestStart_CanceledAfterSuccessfulHookRollsBack(t *testing.T) {
 }
 
 func TestStop_CompletedLoopWinsOverCanceledContext(t *testing.T) {
-	b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil)
+	b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +448,7 @@ func TestStop_WaitsForCleanupResult(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		entered, release := make(chan struct{}), make(chan struct{})
 		want := errors.New("cleanup failed")
-		b, err := MakeBeat(Config{Period: time.Hour}, noopJob, nil, WithOnStop(func(context.Context) error {
+		b, err := MakeBeat(Config{Period: time.Hour}, runnerFor(t, noopWork), WithOnStop(func(context.Context) error {
 			close(entered)
 			<-release
 
