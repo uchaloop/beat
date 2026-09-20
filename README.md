@@ -374,11 +374,6 @@ Import `github.com/uchaloop/confx` and include `confx.Module()` once per applica
 | [job](https://github.com/uchaloop/job) | One attempt, middleware and timeout |
 | [beatfx](https://github.com/uchaloop/beatfx) | Connect the scheduler to Fx |
 
-## Acknowledgements
-
-Thanks to the [Go authors and contributors](https://go.dev/) for
-the context, time and testing primitives this library builds on.
-
 ## License
 
 [MIT](LICENSE)
