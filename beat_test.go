@@ -37,7 +37,7 @@ func (r *recorder) all() []Record {
 	return slices.Clone(r.recs)
 }
 
-func noopWork(context.Context) (int, error) { return 0, nil }
+func noopWork(context.Context) (int64, error) { return 0, nil }
 
 // runnerFor builds a job.Runner with a generous timeout, which is the runner's
 // business and not the schedule's.
@@ -88,7 +88,7 @@ func TestBeat_FixedRateKeepsTheGrid(t *testing.T) {
 
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) { return 7, nil }, &rec)
+			func(context.Context) (int64, error) { return 7, nil }, &rec)
 
 		synctest.Sleep(350 * time.Millisecond)
 
@@ -126,7 +126,7 @@ func TestBeat_LongRunMissesPointsAndReportsThem(t *testing.T) {
 
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) {
+			func(context.Context) (int64, error) {
 				// Two and a half periods: the run covers the points at +200ms
 				// and +300ms, which must be reported, not queued.
 				time.Sleep(250 * time.Millisecond)
@@ -195,7 +195,7 @@ func TestBeat_FixedDelayMeasuresFromTheEnd(t *testing.T) {
 
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) {
+			func(context.Context) (int64, error) {
 				time.Sleep(50 * time.Millisecond)
 
 				return 1, nil
@@ -258,7 +258,7 @@ func TestBeat_BackoffHoldsTheLoopWithoutCountingItAsLoss(t *testing.T) {
 
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) { return 0, nil }, &rec,
+			func(context.Context) (int64, error) { return 0, nil }, &rec,
 			WithBackoff(func(r Record) time.Duration {
 				if r.Result.Processed == 0 {
 					return 250 * time.Millisecond
@@ -299,7 +299,7 @@ func TestBeat_TimeoutReachesTheRecord(t *testing.T) {
 		var rec recorder
 
 		runner, err := job.MakeRunner(job.Config{Timeout: 100 * time.Millisecond},
-			func(context.Context) (int, error) {
+			func(context.Context) (int64, error) {
 				// Ignores ctx entirely and reports success.
 				time.Sleep(300 * time.Millisecond)
 
@@ -340,7 +340,7 @@ func TestBeat_ShutdownIsCanceledNotAnError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(ctx context.Context) (int, error) {
+			func(ctx context.Context) (int64, error) {
 				<-ctx.Done() // returns only once stop cancels the run
 
 				return 0, ctx.Err()
@@ -368,7 +368,7 @@ func TestBeat_GracefulStopLetsTheRunFinish(t *testing.T) {
 		var sawCancel bool
 
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(ctx context.Context) (int, error) {
+			func(ctx context.Context) (int64, error) {
 				time.Sleep(200 * time.Millisecond)
 				sawCancel = ctx.Err() != nil
 
@@ -396,7 +396,7 @@ func TestBeat_ErrorReachesTheRecord(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var rec recorder
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) { return 0, errors.New("boom") }, &rec)
+			func(context.Context) (int64, error) { return 0, errors.New("boom") }, &rec)
 
 		synctest.Sleep(150 * time.Millisecond)
 
@@ -659,7 +659,7 @@ func TestBeat_RotationCountsOnlyItsOwnMissedPoints(t *testing.T) {
 		var rec recorder
 
 		b := start(t, Config{Period: 100 * time.Millisecond},
-			func(context.Context) (int, error) {
+			func(context.Context) (int64, error) {
 				// Covers the next three points: two foreign, one of ours.
 				time.Sleep(350 * time.Millisecond)
 
@@ -735,7 +735,7 @@ func TestStop_GracefulDuringTheDecisionHandlerStartsNoWork(t *testing.T) {
 	var first atomic.Bool
 
 	b, err := MakeBeat(Config{Period: 50 * time.Millisecond},
-		runnerFor(t, func(context.Context) (int, error) {
+		runnerFor(t, func(context.Context) (int64, error) {
 			calls.Add(1)
 
 			return 0, nil
@@ -908,7 +908,7 @@ func TestBeat_RotationStaysConsistentAcrossTurns(t *testing.T) {
 				t.Fatalf("decision %d is for slot %d, after slot %d", i, d.Slot, decisions[i-1].Slot)
 			}
 
-			owner := sorted[d.Slot%int64(len(sorted))]
+			owner := sorted[d.Slot%uint64(len(sorted))]
 			if d.Owner != owner {
 				t.Errorf("slot %d owner = %q, want %q", d.Slot, d.Owner, owner)
 			}
@@ -965,4 +965,24 @@ func TestBeat_RotationStaysConsistentAcrossTurns(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestOwnedPointsSkipped_DoesNotAddSlotAndCount(t *testing.T) {
+	b, err := MakeBeat(Config{Period: time.Second}, runnerFor(t, noopWork),
+		WithAssignment(rotationFor(t, "el", time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// MaxUint64 is divisible by three. The following mathematical slot belongs
+	// to el (remainder one), even though adding one in uint64 would wrap to zero.
+	if got := b.ownedPointsSkipped(^uint64(0), 1); got != 1 {
+		t.Fatalf("owned points = %d, want 1", got)
+	}
+	if got := b.ownedPointsSkipped(^uint64(0), ^uint64(0)); got != ^uint64(0)/3 {
+		t.Fatalf("owned points = %d, want %d", got, ^uint64(0)/3)
+	}
+	b.rotation = nil
+	if got := b.ownedPointsSkipped(^uint64(0), ^uint64(0)); got != ^uint64(0) {
+		t.Fatalf("unassigned points = %d", got)
+	}
 }

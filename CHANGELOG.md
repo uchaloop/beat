@@ -1,6 +1,30 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-09-22
+
+### Breaking changes
+
+- Change `Record.Missed` to `uint64`, with accumulated counts capped at MaxUint64.
+- Adapt cluster-owned miss counting to `assignment.OwnedAfter` and examples to
+  job's `int64` processed-item counts. `Record.Result` preserves the reported count.
+
+### Fixed
+
+- Prevent extreme backoff durations and large clock gaps from overflowing
+  fixed-rate scheduling into the past.
+- Count cluster-owned missed points without overflowing slot-range arithmetic.
+
+### Documentation
+
+- Clarify that callbacks must request shutdown through the lifecycle owner
+  rather than call `Stop` synchronously, and document recovery boundaries.
+- Clarify that old and new topology configurations must not execute concurrently;
+  a rolling restart is insufficient.
+- Document `Result.ErrorHandlerCalled` and refresh the README logo with an SVG.
+
+## [0.6.1] - 2026-09-20
+
+- Remove the redundant README acknowledgements section.
 
 ## [0.6.0] - 2026-09-20
 
@@ -138,7 +162,6 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
   standalone and Fx lifecycles, cooperative timeouts and graceful stop.
 - Added recovery, idle and batch middleware, plus MultiHandler.
 
-[Unreleased]: https://github.com/uchaloop/beat/compare/v0.6.0...HEAD
 [0.5.0]: https://github.com/uchaloop/beat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/uchaloop/beat/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/uchaloop/beat/compare/v0.3.1...v0.3.2
@@ -150,3 +173,7 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0
 
 [0.6.0]: https://github.com/uchaloop/beat/compare/v0.5.0...v0.6.0
+
+[0.7.0]: https://github.com/uchaloop/beat/compare/v0.6.1...v0.7.0
+
+[0.6.1]: https://github.com/uchaloop/beat/compare/v0.6.0...v0.6.1

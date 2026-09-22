@@ -310,6 +310,10 @@ func (b *Beat) Start(ctx context.Context) error {
 // error. Waiting callers may return their own context error before the first
 // Stop finishes. The deadline bounds waiting; OnStop runs synchronously and
 // must respect ctx. Stop during OnStart waits for that hook before cleanup.
+//
+// Do not call Stop synchronously from the work, handlers, backoff callback or
+// lifecycle hooks: it would wait for the calling callback itself to return.
+// Signal the application's lifecycle owner instead, then return from the callback.
 func (b *Beat) Stop(ctx context.Context) error {
 	b.mu.Lock()
 
@@ -422,7 +426,7 @@ func (b *Beat) closeStopDone() { b.stopDoneOnce.Do(func() { close(b.stopDone) })
 // inside the work.
 func (b *Beat) runLoop() {
 	target := b.schedule.firstTarget(time.Now())
-	missed := 0
+	var missed uint64
 
 	for {
 		if !b.sleepUntil(target) {
@@ -459,7 +463,7 @@ func (b *Beat) runLoop() {
 		}
 
 		next, skipped := b.schedule.nextTarget(time.Now(), target, jobEnd, backoff)
-		missed += b.ownedPointsSkipped(decision.Slot, skipped)
+		missed = addMissed(missed, b.ownedPointsSkipped(decision.Slot, skipped))
 		target = next
 	}
 }
@@ -502,12 +506,12 @@ func (b *Beat) decide(target time.Time) (assignment.Decision, error) {
 
 // ownedPointsSkipped reports how many of the points passed over belonged to
 // this process. Without a rotation they all did.
-func (b *Beat) ownedPointsSkipped(slot int64, skipped int) int {
+func (b *Beat) ownedPointsSkipped(slot, skipped uint64) uint64 {
 	if b.rotation == nil {
 		return skipped
 	}
 
-	return b.rotation.OwnedBetween(slot, slot+int64(skipped))
+	return b.rotation.OwnedAfter(slot, skipped)
 }
 
 // endLoopWithError records an error the loop cannot carry on past. Scheduling
@@ -572,7 +576,7 @@ func (b *Beat) schedulingStopped() bool {
 }
 
 // runAttempt performs one attempt and reports the result to the Handler.
-func (b *Beat) runAttempt(target time.Time, missed int) Record {
+func (b *Beat) runAttempt(target time.Time, missed uint64) Record {
 	b.iteration++
 
 	result := b.runner.Run(b.workCtx)
@@ -590,8 +594,8 @@ func (b *Beat) runAttempt(target time.Time, missed int) Record {
 
 	// Deliver the Record with a context that is not cancelled, so the final run
 	// at shutdown still reaches a Handler that does ctx-bound work. beat does not
-	// recover the work or the Handler: a panic propagates and crashes the process
-	// (with a stack on stderr) unless job/middleware/recovery is used.
+	// recover panics. job/middleware/recovery can protect the wrapped work,
+	// but does not protect this Handler or the Runner's ErrorHandler.
 	b.handler.Handle(context.WithoutCancel(b.workCtx), record)
 
 	return record

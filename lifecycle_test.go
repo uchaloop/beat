@@ -31,7 +31,7 @@ func TestStart_SecondCallDoesNotLaunchASecondLoop(t *testing.T) {
 		var live, peak atomic.Int64
 
 		b, err := MakeBeat(Config{Period: 100 * time.Millisecond},
-			runnerFor(t, func(context.Context) (int, error) {
+			runnerFor(t, func(context.Context) (int64, error) {
 				n := live.Add(1)
 				for {
 					p := peak.Load()
@@ -290,7 +290,7 @@ func stillRunning(t *testing.T, fn job.Func, handler Handler) {
 }
 
 func TestStop_DeadlineWithAHangingJob(t *testing.T) {
-	stillRunning(t, func(context.Context) (int, error) {
+	stillRunning(t, func(context.Context) (int64, error) {
 		time.Sleep(10 * time.Second) // ignores cancellation, as a bad Job does
 
 		return 0, nil
@@ -316,7 +316,7 @@ func TestStop_DuringStartup(t *testing.T) {
 				startupErr, cleanupErr := errors.New("startup"), errors.New("cleanup")
 
 				var stops, jobs atomic.Int64
-				b, err := MakeBeat(Config{Period: time.Second}, runnerFor(t, func(context.Context) (int, error) {
+				b, err := MakeBeat(Config{Period: time.Second}, runnerFor(t, func(context.Context) (int64, error) {
 					jobs.Add(1)
 
 					return 0, nil

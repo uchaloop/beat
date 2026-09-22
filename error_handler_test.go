@@ -15,7 +15,7 @@ func TestErrorHandler_RotationAccountsForEntireAttempt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var records recorder
 		workCalls, handlerCalls := 0, 0
-		runner, err := job.MakeRunner(job.Config{}, func(context.Context) (int, error) { workCalls++; return 1, errors.New("work") },
+		runner, err := job.MakeRunner(job.Config{}, func(context.Context) (int64, error) { workCalls++; return 1, errors.New("work") },
 			job.WithErrorHandler(func(context.Context, error) error { handlerCalls++; time.Sleep(350 * time.Millisecond); return nil }))
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestErrorHandler_RotationAccountsForEntireAttempt(t *testing.T) {
 func TestErrorHandler_BackoffStartsAfterDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var records recorder
-		runner, err := job.MakeRunner(job.Config{}, func(context.Context) (int, error) { return 0, errors.New("work") },
+		runner, err := job.MakeRunner(job.Config{}, func(context.Context) (int64, error) { return 0, errors.New("work") },
 			job.WithErrorHandler(func(context.Context, error) error { time.Sleep(200 * time.Millisecond); return nil }))
 		if err != nil {
 			t.Fatal(err)
@@ -80,7 +80,7 @@ func TestErrorHandler_StopWaitsForIndependentDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		entered := make(chan struct{})
 		cleaned := false
-		runner, err := job.MakeRunner(job.Config{ErrorHandlerTimeout: time.Second}, func(context.Context) (int, error) { return 0, errors.New("work") },
+		runner, err := job.MakeRunner(job.Config{ErrorHandlerTimeout: time.Second}, func(context.Context) (int64, error) { return 0, errors.New("work") },
 			job.WithErrorHandler(func(ctx context.Context, _ error) error { close(entered); <-ctx.Done(); return ctx.Err() }))
 		if err != nil {
 			t.Fatal(err)
