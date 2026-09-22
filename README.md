@@ -1,6 +1,7 @@
 # beat
 
-<p align="center"><img src="logo.png" alt="beat — Go gopher holding a heartbeat line" width="240"></p>
+<!--suppress HtmlDeprecatedAttribute -->
+<p align="center"><img src="logo.svg" alt="beat — Go gopher holding a heartbeat line" width="240"></p>
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/uchaloop/beat.svg)](https://pkg.go.dev/github.com/uchaloop/beat) [![CI](https://github.com/uchaloop/beat/actions/workflows/ci.yml/badge.svg)](https://github.com/uchaloop/beat/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/tag/uchaloop/beat?label=release)](https://github.com/uchaloop/beat/tags) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -41,7 +42,7 @@ func main() {
     shutdown, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
     defer cancel()
 
-    work := func(ctx context.Context) (int, error) {
+    work := func(ctx context.Context) (int64, error) {
         // Replace this timer with one bounded batch of application work.
         timer := time.NewTimer(20 * time.Millisecond)
         defer timer.Stop()
@@ -227,10 +228,16 @@ A Handler receives one Record after each completed Job:
 | `GridPoint`, `ScheduledFor` | Shared point before offset and this replica's target |
 | `Result.Start`, `Result.Duration` | Actual start and total attempt time, including ErrorHandler |
 | `Result.WorkDuration`, `Result.ErrorHandlerDuration` | Duration of each execution stage |
+| `Result.ErrorHandlerCalled` | Whether error processing ran, even if its duration is zero |
 | `Result.ErrorHandlerErr` | Failure of error processing, separate from Result.Err |
 | `Result.Processed`, `Result.Err` | Values returned by the work |
 | `Result.Outcome` | `ok`, `error`, `panic`, `timeout` or `canceled` |
 | `Missed` | Unintentional grid losses computed after the preceding run |
+
+`Missed` is a `uint64`; counts exceeding `MaxUint64` saturate instead of wrapping.
+
+`Result.Processed` is an `int64`, preserved as returned by `job.Func`. The work
+should report a non-negative count, including partial progress on error.
 
 Outcome is authoritative even if Err is nil. A recovered panic takes precedence,
 then cancellation of the Job context (timeout or shutdown), then the Job's error.
@@ -262,6 +269,10 @@ I/O its own budget. `MultiHandler` calls sinks sequentially. The application own
 
 > [!IMPORTANT]
 > `Done` means loop activity has ended. It does not mean cleanup has completed.
+
+Do not call `Stop` synchronously from the work, handlers, backoff callback or
+lifecycle hooks: it waits for that callback to return. Signal the application's
+lifecycle owner through a channel, return, and let the owner call `Stop`.
 
 `Done()` closes after startup/run-loop activity finishes, **before OnStop**. It
 closes for two reasons: a `Stop` you called, and a loop that ended by itself
@@ -325,6 +336,11 @@ The rotation names an owner; it does not guarantee the owner runs. A cluster
 that is down leaves its points unserved, and no other cluster takes over - that
 would need shared state the policy deliberately does not have. Work must
 therefore survive a skipped attempt.
+
+When changing the cluster set or period, stop scheduling in all clusters and
+wait for old attempts to finish before starting the new configuration. A rolling
+restart can leave old and new ownership rules active together, producing both
+duplicate executions and unserved points.
 
 ## Documentation
 

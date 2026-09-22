@@ -79,13 +79,14 @@ type Record struct {
 	// wait is the schedule the application requested, and a point another
 	// cluster owns was never this process's to serve. It is always 0 under
 	// ModeFixedDelay, which has no grid to miss.
+	// Counts larger than MaxUint64 are capped at that maximum.
 	//
 	// This Record's timestamps and Result describe the current attempt, not the
 	// earlier work that lost the points. A single Record therefore cannot
 	// identify the cause - the previous attempt may have been long while this
 	// one is short and on time, and under a rotation other clusters' points sit
 	// between them. Comparing successive records can.
-	Missed int
+	Missed uint64
 }
 
 // Handler receives a Record after every run. It is the single observability

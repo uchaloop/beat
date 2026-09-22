@@ -1,6 +1,7 @@
 package beat
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -85,7 +86,7 @@ func TestSchedule_After(t *testing.T) {
 		now        time.Duration
 		backoff    time.Duration
 		wantNext   time.Duration
-		wantMissed int
+		wantMissed uint64
 	}{
 		{
 			name:     "a run inside its period keeps the cadence",
@@ -270,5 +271,65 @@ func TestRandomOffset_StaysBelowMax(t *testing.T) {
 
 	if got := randomOffset(0); got != 0 {
 		t.Errorf("zero max = %v, want 0", got)
+	}
+}
+
+func TestSchedule_ExtremeBackoffStaysOnFutureGrid(t *testing.T) {
+	const period = 5 * time.Minute
+	s := schedule{mode: ModeFixedRate, period: period}
+	target := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	end := target.Add(10 * time.Minute)
+	backoff := time.Duration(1<<63 - 1)
+	boundary := end.Add(backoff)
+
+	next, missed := s.nextTarget(end, target, end, backoff)
+	if next.Before(boundary) || next.Sub(boundary) >= period {
+		t.Fatalf("next = %v, boundary = %v", next, boundary)
+	}
+	// The grid is minute-aligned, including beyond UnixNano's supported range.
+	if next.Second() != 0 || next.Nanosecond() != 0 || next.Minute()%5 != 0 {
+		t.Fatalf("next is off grid: %v", next)
+	}
+	if missed != 1 {
+		t.Fatalf("missed = %d, want 1; backoff is not a loss", missed)
+	}
+}
+
+func TestSchedule_ExtremeGapCapsMissed(t *testing.T) {
+	s := schedule{mode: ModeFixedRate, period: time.Nanosecond}
+	target := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	boundary := target.AddDate(600, 0, 0)
+	next, missed := s.advanceGrid(target, boundary)
+	if !next.Equal(boundary) {
+		t.Fatalf("next = %v, want %v", next, boundary)
+	}
+	if want := uint64(math.MaxUint64); missed != want {
+		t.Fatalf("missed = %d, want capped count %d", missed, want)
+	}
+}
+
+func TestSchedule_MissedExceedsSignedRange(t *testing.T) {
+	s := schedule{mode: ModeFixedRate, period: time.Nanosecond}
+	target := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	boundary := target.AddDate(400, 0, 0)
+	next, missed := s.advanceGrid(target, boundary)
+	// Sub would saturate; seconds are enough to derive the exact expected count.
+	want := uint64(boundary.Unix()-target.Unix())*uint64(time.Second) - 1
+	if !next.Equal(boundary) || missed != want {
+		t.Fatalf("next=%v missed=%d, want %v/%d", next, missed, boundary, want)
+	}
+}
+
+func TestAddMissed_Saturates(t *testing.T) {
+	tests := []struct{ current, additional, want uint64 }{
+		{0, 0, 0}, {3, 4, 7}, {0, math.MaxUint64, math.MaxUint64},
+		{math.MaxUint64 - 1, 1, math.MaxUint64},
+		{math.MaxUint64 - 1, 2, math.MaxUint64},
+		{math.MaxUint64, math.MaxUint64, math.MaxUint64},
+	}
+	for _, tc := range tests {
+		if got := addMissed(tc.current, tc.additional); got != tc.want {
+			t.Fatalf("addMissed(%d, %d)=%d, want %d", tc.current, tc.additional, got, tc.want)
+		}
 	}
 }

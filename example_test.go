@@ -14,7 +14,7 @@ import (
 	"github.com/uchaloop/job/middleware/recovery"
 )
 
-func work(ctx context.Context) (int, error) {
+func work(ctx context.Context) (int64, error) {
 	// Replace this timer with one bounded batch of application work.
 	timer := time.NewTimer(20 * time.Millisecond)
 	defer timer.Stop()

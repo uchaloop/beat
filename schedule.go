@@ -3,6 +3,7 @@ package beat
 import (
 	"context"
 	"hash/fnv"
+	"math"
 	"math/rand/v2"
 	"time"
 )
@@ -37,7 +38,7 @@ func (s schedule) firstTarget(now time.Time) time.Time {
 // now is when scheduling resumes after Handler and the backoff callback.
 // jobEnd is when the Runner returned, including error processing; backoff is the pause
 // after it, measured from jobEnd.
-func (s schedule) nextTarget(now, target, jobEnd time.Time, backoff time.Duration) (time.Time, int) {
+func (s schedule) nextTarget(now, target, jobEnd time.Time, backoff time.Duration) (time.Time, uint64) {
 	notBefore := now
 	if backoff > 0 {
 		if backoffUntil := jobEnd.Add(backoff); backoffUntil.After(notBefore) {
@@ -68,18 +69,35 @@ func (s schedule) nextTarget(now, target, jobEnd time.Time, backoff time.Duratio
 
 // advanceGrid walks the grid from target to the first point at or after notBefore,
 // and reports how many points it stepped over on the way.
-func (s schedule) advanceGrid(target, notBefore time.Time) (time.Time, int) {
+func (s schedule) advanceGrid(target, notBefore time.Time) (time.Time, uint64) {
 	next := target.Add(s.period)
 	if !next.Before(notBefore) {
 		return next, 0
 	}
 
-	// Jump straight to the first point at or after notBefore instead of
-	// stepping one period at a time: a clock that moved by a day would
-	// otherwise cost a day's worth of iterations.
-	bypassedPoints := int64((notBefore.Sub(next) + s.period - 1) / s.period)
+	var missed uint64
+	for next.Before(notBefore) {
+		// Sub saturates for gaps larger than a Duration. Advance by whole
+		// periods within that range, then round up with a separate Add: neither
+		// ceiling division nor its product can overflow. Ordinary gaps need
+		// one pass; only gaps spanning centuries need another.
+		gap := notBefore.Sub(next)
+		points := uint64(gap / s.period)
+		next = next.Add(gap - gap%s.period)
+		if next.Before(notBefore) {
+			next = next.Add(s.period)
+			points++
+		}
 
-	return next.Add(time.Duration(bypassedPoints) * s.period), int(bypassedPoints)
+		missed = addMissed(missed, points)
+	}
+
+	return next, missed
+}
+
+// addMissed caps an accumulated count instead of letting extreme gaps wrap it.
+func addMissed(current, additional uint64) uint64 {
+	return current + min(additional, math.MaxUint64-current)
 }
 
 // nextGridPoint reports the first grid point strictly after now. Points sit
