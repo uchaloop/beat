@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.7.1] - 2026-10-01
+
+- Removed `Config.ConfigName`; applications now register an explicit instance name.
+- Added `envDescription` to all ENV fields and updated examples for confmaker
+  v0.9.0 / confx v0.3.0. Existing ENV names and required/optional rules are unchanged.
+
 ## [0.7.0] - 2026-09-22
 
 ### Breaking changes
@@ -162,6 +170,10 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
   standalone and Fx lifecycles, cooperative timeouts and graceful stop.
 - Added recovery, idle and batch middleware, plus MultiHandler.
 
+[0.7.1]: https://github.com/uchaloop/beat/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/uchaloop/beat/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/uchaloop/beat/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/uchaloop/beat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/uchaloop/beat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/uchaloop/beat/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/uchaloop/beat/compare/v0.3.1...v0.3.2
@@ -171,9 +183,3 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
 [0.1.2]: https://github.com/uchaloop/beat/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/uchaloop/beat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0
-
-[0.6.0]: https://github.com/uchaloop/beat/compare/v0.5.0...v0.6.0
-
-[0.7.0]: https://github.com/uchaloop/beat/compare/v0.6.1...v0.7.0
-
-[0.6.1]: https://github.com/uchaloop/beat/compare/v0.6.0...v0.6.1
