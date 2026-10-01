@@ -360,7 +360,7 @@ duplicate executions and unserved points.
 The ordinary `beat.Config{...}` in the quick start can be replaced with:
 
 ```go
-cfg, err := confmaker.Load[beat.Config]()
+cfg, err := confmaker.Load[beat.Config]("beat")
 if err != nil {
     return err
 }
@@ -376,7 +376,7 @@ For an Fx application, replace `fx.Supply(beat.Config{...})` with:
 
 ```go
 confx.Module(),
-confx.Provide[beat.Config](),
+confx.Provide[beat.Config]("beat"),
 ```
 
 Import `github.com/uchaloop/confx` and include `confx.Module()` once per application.

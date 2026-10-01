@@ -13,12 +13,13 @@ import (
 // The timeout of one attempt is not here: it belongs to the job.Runner beat
 // drives, and lives in job.Config, so the same work carries the same bound
 // whether a scheduler or a one-shot process runs it.
+// Register with the explicit instance name "beat" to read BEAT_*.
 type Config struct {
 	// Period is how often the work runs. Under ModeFixedRate it is the spacing
 	// of the grid the runs sit on; under ModeFixedDelay it is the pause between
 	// the end of one run and the start of the next. The deployment has to
 	// supply it: there is no period that makes sense for every job.
-	Period time.Duration `env:"PERIOD,notEmpty"`
+	Period time.Duration `env:"PERIOD,notEmpty" envDescription:"Interval between scheduled runs; must be greater than zero."`
 
 	// Jitter is the upper bound of the random offset that staggers replicas so
 	// they do not all fire at once. The draw is half-open, [0, Jitter), and
@@ -32,13 +33,8 @@ type Config struct {
 	//
 	// It spreads load. It is not a guard against two replicas doing the same
 	// work: runs longer than the offset overlap regardless.
-	Jitter time.Duration `env:"JITTER"`
+	Jitter time.Duration `env:"JITTER" envDescription:"Exclusive upper bound of a nonnegative random startup offset sampled once; zero disables it; must not exceed period."`
 }
-
-// ConfigName is the default instance name, "beat": a loader such as confmaker
-// reads BEAT_PERIOD and the rest of BEAT_* unless the application names the
-// instance itself.
-func (Config) ConfigName() string { return "beat" }
 
 // Validate reports whether the Config is usable. confmaker calls it after
 // filling the struct, and it reports every problem at once rather than the
