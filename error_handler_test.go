@@ -7,8 +7,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/uchaloop/job"
-	"github.com/uchaloop/job/assignment"
+	"github.com/uchaloop/beat/assignment"
+	"github.com/uchaloop/beat/job"
 )
 
 func TestErrorHandler_RotationAccountsForEntireAttempt(t *testing.T) {
@@ -39,8 +39,8 @@ func TestErrorHandler_RotationAccountsForEntireAttempt(t *testing.T) {
 			t.Fatalf("work=%d handlers=%d records=%d", workCalls, handlerCalls, len(recs))
 		}
 		for _, r := range recs {
-			decision, err := b.rotation.Decide(assignment.Invocation{ScheduledFor: r.GridPoint})
-			if err != nil || !decision.Execute {
+			decision, err := b.rotation.Decide(assignment.Invocation{ScheduledAt: r.GridPoint})
+			if err != nil || !decision.IsExecutable {
 				t.Fatalf("foreign run: %+v %v", r, err)
 			}
 			if r.Result.Duration != 350*time.Millisecond || r.Result.WorkDuration != 0 {
@@ -70,7 +70,7 @@ func TestErrorHandler_BackoffStartsAfterDelivery(t *testing.T) {
 			t.Fatal(err)
 		}
 		recs := records.all()
-		if len(recs) != 2 || recs[1].Result.Start.Sub(recs[0].Result.Start) != 500*time.Millisecond {
+		if len(recs) != 2 || recs[1].Result.StartedAt.Sub(recs[0].Result.StartedAt) != 500*time.Millisecond {
 			t.Fatalf("records=%+v", recs)
 		}
 	})

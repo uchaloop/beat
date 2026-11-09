@@ -10,8 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/uchaloop/job"
-	"github.com/uchaloop/job/assignment"
+	"github.com/uchaloop/beat/assignment"
+	"github.com/uchaloop/beat/job"
 )
 
 // recorder collects the records a Beat produces. The mutex is not about the
@@ -165,7 +165,7 @@ func TestBeat_SlowHandlerCostsPoints(t *testing.T) {
 		var rec recorder
 
 		b := start(t, Config{Period: 100 * time.Millisecond}, noopWork,
-			MultiHandler(&rec, HandlerFunc(func(context.Context, Record) {
+			MakeMultiHandler(&rec, HandlerFunc(func(context.Context, Record) {
 				time.Sleep(150 * time.Millisecond)
 			})))
 
@@ -183,7 +183,7 @@ func TestBeat_SlowHandlerCostsPoints(t *testing.T) {
 		if recs[1].Missed != 1 {
 			t.Errorf("Missed = %d, want 1", recs[1].Missed)
 		}
-		if late := recs[1].Result.Start.Sub(recs[1].ScheduledFor); late != 0 {
+		if late := recs[1].Result.StartedAt.Sub(recs[1].ScheduledFor); late != 0 {
 			t.Errorf("lateness = %v, want 0 - the loop caught the next point", late)
 		}
 	})
@@ -365,12 +365,12 @@ func TestBeat_ShutdownIsCanceledNotAnError(t *testing.T) {
 func TestBeat_GracefulStopLetsTheRunFinish(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var rec recorder
-		var sawCancel bool
+		var isCancelObserved bool
 
 		b := start(t, Config{Period: 100 * time.Millisecond},
 			func(ctx context.Context) (int64, error) {
 				time.Sleep(200 * time.Millisecond)
-				sawCancel = ctx.Err() != nil
+				isCancelObserved = ctx.Err() != nil
 
 				return 5, nil
 			}, &rec, WithGracefulStop())
@@ -381,7 +381,7 @@ func TestBeat_GracefulStopLetsTheRunFinish(t *testing.T) {
 			t.Fatalf("Stop: %v", err)
 		}
 
-		if sawCancel {
+		if isCancelObserved {
 			t.Error("graceful stop cancelled the in-flight run's context")
 		}
 
@@ -461,13 +461,13 @@ func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  Config
-		ok   bool
+		isOK bool
 	}{
-		{name: "a period is enough", cfg: Config{Period: time.Second}, ok: true},
+		{name: "a period is enough", cfg: Config{Period: time.Second}, isOK: true},
 		{name: "no period", cfg: Config{}},
 		{name: "negative period", cfg: Config{Period: -time.Second}},
 		{name: "negative jitter", cfg: Config{Period: time.Second, Jitter: -1}},
-		{name: "jitter at the period", cfg: Config{Period: time.Second, Jitter: time.Second}, ok: true},
+		{name: "jitter at the period", cfg: Config{Period: time.Second, Jitter: time.Second}, isOK: true},
 		{name: "jitter past the period", cfg: Config{Period: time.Second, Jitter: 2 * time.Second}},
 	}
 
@@ -475,10 +475,10 @@ func TestConfigValidate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.cfg.Validate()
 
-			if tc.ok && err != nil {
+			if tc.isOK && err != nil {
 				t.Errorf("rejected a valid config: %v", err)
 			}
-			if !tc.ok && err == nil {
+			if !tc.isOK && err == nil {
 				t.Error("accepted an invalid config")
 			}
 		})
@@ -787,15 +787,15 @@ func TestAcceptsAttempt_FollowsTheLifecycleState(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		state lifecycleState
-		want  bool
+		name       string
+		state      lifecycleState
+		isExpected bool
 	}{
-		{"new", stateNew, false},
-		{"starting", stateStarting, false},
-		{"running", stateRunning, true},
-		{"stopping", stateStopping, false},
-		{"stopped", stateStopped, false},
+		{name: "new", state: stateNew, isExpected: false},
+		{name: "starting", state: stateStartup, isExpected: false},
+		{name: "running", state: stateActive, isExpected: true},
+		{name: "stopping", state: stateShutdown, isExpected: false},
+		{name: "stopped", state: stateStopped, isExpected: false},
 	}
 
 	for _, tc := range tests {
@@ -804,14 +804,14 @@ func TestAcceptsAttempt_FollowsTheLifecycleState(t *testing.T) {
 			b.state = tc.state
 			b.mu.Unlock()
 
-			if got := b.acceptsAttempt(); got != tc.want {
-				t.Errorf("acceptsAttempt() = %v in %s, want %v", got, tc.name, tc.want)
+			if isAllowed := b.isAttemptAllowed(); isAllowed != tc.isExpected {
+				t.Errorf("isAttemptAllowed() = %v in %s, isExpected %v", isAllowed, tc.name, tc.isExpected)
 			}
 		})
 	}
 }
 
-// job.Runner reports a zero Start when the caller's context was already done,
+// job.Runner reports a zero StartedAt when the caller's context was already done,
 // because nothing ran and nothing was measured. That value must not reach the
 // schedule: a backoff measured from year one would never hold anything back.
 //
@@ -827,7 +827,7 @@ func TestAttemptEnd_NeverReturnsAMeaninglessPoint(t *testing.T) {
 	}
 
 	start := time.Now().Add(-time.Minute)
-	measured := job.Result{Start: start, Duration: 30 * time.Second}
+	measured := job.Result{StartedAt: start, Duration: 30 * time.Second}
 
 	if got := attemptEnd(measured); !got.Equal(start.Add(30 * time.Second)) {
 		t.Errorf("attemptEnd = %v, want %v", got, start.Add(30*time.Second))
@@ -906,15 +906,15 @@ func TestBeat_RotationStaysConsistentAcrossTurns(t *testing.T) {
 			if d.Owner != owner {
 				t.Errorf("slot %d owner = %q, want %q", d.Slot, d.Owner, owner)
 			}
-			if d.Execute != (owner == ours) {
-				t.Errorf("slot %d Execute = %v for owner %q", d.Slot, d.Execute, owner)
+			if d.IsExecutable != (owner == ours) {
+				t.Errorf("slot %d Execute = %v for owner %q", d.Slot, d.IsExecutable, owner)
 			}
 		}
 
 		// The runs are exactly the points this process was given.
 		var wanted []assignment.Decision
 		for _, d := range decisions {
-			if d.Execute {
+			if d.IsExecutable {
 				wanted = append(wanted, d)
 			}
 		}
@@ -928,9 +928,9 @@ func TestBeat_RotationStaysConsistentAcrossTurns(t *testing.T) {
 		}
 
 		for i, r := range records {
-			if !r.GridPoint.Equal(wanted[i].Invocation.ScheduledFor) {
+			if !r.GridPoint.Equal(wanted[i].Invocation.ScheduledAt) {
 				t.Errorf("run %d served %v, but the decision was for %v",
-					i, r.GridPoint, wanted[i].Invocation.ScheduledFor)
+					i, r.GridPoint, wanted[i].Invocation.ScheduledAt)
 			}
 			if got, want := r.Iteration, int64(i+1); got != want {
 				t.Errorf("run %d has Iteration %d, want %d", i, got, want)

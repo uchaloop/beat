@@ -4,6 +4,7 @@ import (
 	"context"
 	"hash/fnv"
 	"math"
+	"math/big"
 	"math/rand/v2"
 	"time"
 )
@@ -105,9 +106,21 @@ func addMissed(current, additional uint64) uint64 {
 // offset. Nothing about the grid depends on when the process started, which is
 // what makes the offset - and only the offset - decide where a replica sits.
 func (s schedule) nextGridPoint(now time.Time) time.Time {
-	k := now.Add(-s.offset).UnixNano() / int64(s.period)
+	// UnixNano and multiplication of a slot index can overflow even when the
+	// resulting time.Time is representable. Compute only the phase on an exact
+	// Unix coordinate; Mod also handles points before the epoch correctly.
+	var coordinate, scale, period, offset big.Int
+	coordinate.SetInt64(now.Unix())
+	scale.SetInt64(int64(time.Second))
+	coordinate.Mul(&coordinate, &scale)
+	offset.SetInt64(int64(now.Nanosecond()) - int64(s.offset))
+	coordinate.Add(&coordinate, &offset)
+	period.SetInt64(int64(s.period))
+	coordinate.Mod(&coordinate, &period)
 
-	return time.Unix(0, (k+1)*int64(s.period)).Add(s.offset)
+	// The positive distance is at most one period. Strip the monotonic clock:
+	// fixed-rate targets must follow wall time, unlike fixed-delay targets.
+	return now.Round(0).Add(s.period - time.Duration(coordinate.Int64()))
 }
 
 // sharedGridPoint reports the shared grid point a target belongs to: the target

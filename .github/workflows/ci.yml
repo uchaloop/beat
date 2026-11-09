@@ -39,8 +39,19 @@ jobs:
       - name: Download dependencies
         run: go mod download all
 
+      - name: Check module files
+        run: go mod tidy -diff
+
+      - name: Build
+        run: go build ./...
+
       - name: Vet
         run: go vet ./...
 
       - name: Test
         run: go test -race ./...
+      - name: Compile Windows tests
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go test -exec=true ./...

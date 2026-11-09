@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/uchaloop/beat"
-	"github.com/uchaloop/job"
-	"github.com/uchaloop/job/assignment"
-	"github.com/uchaloop/job/middleware/recovery"
+	"github.com/uchaloop/beat/assignment"
+	"github.com/uchaloop/beat/job"
+	"github.com/uchaloop/beat/job/middleware/recovery"
 )
 
 func work(ctx context.Context) (int64, error) {
@@ -36,7 +36,7 @@ func ExampleMakeBeat() {
 	runner, err := job.MakeRunner(
 		job.Config{Timeout: 2 * time.Second},
 		work,
-		job.WithMiddleware(recovery.Middleware()),
+		job.WithMiddleware(recovery.MakeMiddleware()),
 	)
 	if err != nil {
 		slog.Error("configure runner", "error", err)
@@ -134,7 +134,7 @@ func ExampleWithAssignment() {
 		runner,
 		beat.WithAssignment(rotation),
 		beat.WithDecisionHandler(func(d assignment.Decision) {
-			slog.Debug("scheduled point", "slot", d.Slot, "owner", d.Owner, "ours", d.Execute)
+			slog.Debug("scheduled point", "slot", d.Slot, "owner", d.Owner, "ours", d.IsExecutable)
 		}),
 	)
 	if err != nil {

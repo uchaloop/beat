@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/uchaloop/job/assignment"
+	"github.com/uchaloop/beat/assignment"
 )
 
 // settings holds the resolved options for one Beat.
@@ -23,7 +23,7 @@ type settings struct {
 	onStart func(context.Context) error
 	onStop  func(context.Context) error
 
-	graceful bool
+	isGraceful bool
 }
 
 // Option customizes a Beat built by MakeBeat.
@@ -44,8 +44,8 @@ func WithMode(m Mode) Option {
 	return optionFunc(func(s *settings) { s.mode = m })
 }
 
-// WithHandler sets the observability Handler. It overrides a Handler provided
-// through the Fx container.
+// WithHandler sets the observability Handler. The last supplied value wins;
+// nil selects a no-op handler.
 func WithHandler(h Handler) Option {
 	return optionFunc(func(s *settings) { s.handler = h })
 }
@@ -78,7 +78,7 @@ func WithBackoff(fn func(Record) time.Duration) Option {
 
 // WithOffset sets the offset within the period explicitly, instead of drawing
 // one below Config.Jitter. Use it to give each replica a slot that survives a
-// restart - see job/assignment for the cluster-level equivalent - or to spread
+// restart - see assignment for the cluster-level equivalent - or to spread
 // replicas evenly by their index. The offset must be in [0, Period).
 func WithOffset(d time.Duration) Option {
 	return optionFunc(func(s *settings) { s.offset = &d })
@@ -141,8 +141,8 @@ func WithOnStop(h func(context.Context) error) Option {
 
 // WithGracefulStop lets the in-flight run finish on shutdown instead of having
 // its context cancelled. beat stops scheduling new runs immediately; the current
-// run continues until it returns or the stop deadline (fx.StopTimeout, 15s
-// unless the application raises it) elapses, at which point its context is
+// run continues until it returns or the deadline of the context passed to Stop
+// elapses, at which point its context is
 // cancelled as a last resort and Stop reports ErrStillRunning.
 //
 // A job whose duration varies should be matched by a stop timeout above its
@@ -150,5 +150,5 @@ func WithOnStop(h func(context.Context) error) Option {
 // time skips the OnStop hook, which is exactly when a graceful stop was supposed
 // to help.
 func WithGracefulStop() Option {
-	return optionFunc(func(s *settings) { s.graceful = true })
+	return optionFunc(func(s *settings) { s.isGraceful = true })
 }

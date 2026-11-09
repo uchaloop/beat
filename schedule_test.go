@@ -333,3 +333,32 @@ func TestAddMissed_Saturates(t *testing.T) {
 		}
 	}
 }
+
+func TestSchedule_GridBounds(t *testing.T) {
+	tests := []struct {
+		name   string
+		now    time.Time
+		period time.Duration
+		offset time.Duration
+		want   time.Time
+	}{
+		{name: "before offset", now: epoch, period: 10 * time.Second, offset: 3 * time.Second, want: epoch.Add(3 * time.Second)},
+		{name: "negative grid coordinate", now: epoch.Add(-4 * time.Second), period: 10 * time.Second, offset: 3 * time.Second, want: epoch.Add(3 * time.Second)},
+		{name: "exact negative point", now: epoch.Add(-7 * time.Second), period: 10 * time.Second, offset: 3 * time.Second, want: epoch.Add(3 * time.Second)},
+		{name: "cross nanosecond maximum", now: epoch.Add(time.Duration(math.MaxInt64)), period: time.Second, want: time.Unix(9223372037, 0)},
+		{name: "below nanosecond minimum", now: time.Unix(-9223372038, 0), period: time.Second, want: time.Unix(-9223372037, 0)},
+		{name: "maximum period", now: epoch, period: time.Duration(math.MaxInt64), offset: time.Duration(math.MaxInt64 - 1), want: epoch.Add(time.Duration(math.MaxInt64 - 1))},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := schedule{mode: ModeFixedRate, period: tc.period, offset: tc.offset}
+			got := s.nextGridPoint(tc.now)
+			if !got.Equal(tc.want) {
+				t.Fatalf("next point = %v, want %v", got, tc.want)
+			}
+			if !got.After(tc.now) || got.Sub(tc.now) > tc.period {
+				t.Fatal("next point must be within one period strictly after now")
+			}
+		})
+	}
+}
