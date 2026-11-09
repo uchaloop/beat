@@ -1,6 +1,8 @@
 // Package beat schedules one job.Runner in a long-lived process. Attempts are
-// sequential and never overlap. beat suits frequent polling with reusable
-// process state; rare or calendar work belongs in a Kubernetes CronJob.
+// sequential and never overlap within one Beat.
+//
+// One-shot execution is available in github.com/uchaloop/beat/job. The scheduler
+// and one-shot callers share that package's Runner and Result contracts.
 //
 // The work, its middleware and its timeout live in the Runner, so the same
 // attempt can also be driven by a one-shot process. beat adds only the
@@ -17,11 +19,11 @@
 // The grid is anchored in UTC, so there is no time zone and no daylight saving.
 // A point already past is served at once - one late run, no catch-up queue.
 //
-// Config.Jitter draws an offset in [0, Jitter) once per process; WithOffset
-// sets one outright. It may reach Period. Because the grid is absolute, the
-// offset is the only thing separating replicas, and it holds for the life of
-// the process. It spreads load and guards nothing: queue claiming and
-// idempotency belong to the application.
+// Config.Jitter draws an offset in [0, Jitter) once per Beat instance; zero
+// selects no offset. Jitter may equal Period, but the drawn offset is smaller.
+// WithOffset overrides it with an explicit value in [0, Period). The offset
+// remains fixed for that instance. It spreads load but does not prevent
+// duplicate work: queue claiming and idempotency belong to the application.
 //
 // WithBackoff sets a minimum pause after the complete attempt, including any
 // job.ErrorHandler. The pause is outside timeouts and Result.Duration. It cannot shorten the configured
@@ -29,7 +31,7 @@
 //
 // # Running in several clusters
 //
-// WithAssignment adds an optional job/assignment rotation: one cluster owns
+// WithAssignment adds an optional assignment rotation: one cluster owns
 // each grid point and all of its replicas run it, while the others skip. It is
 // off by default, needs ModeFixedRate, and must share Config.Period. A point
 // another cluster owns produces no run, no Record and no backoff, and is not a
@@ -78,5 +80,5 @@
 // Handler, hooks, backoff, child goroutines - propagate.
 //
 // beat provides no calendar scheduling, persistence, replay after downtime, or
-// delivery guarantee for business work. See the README for usage examples.
+// delivery guarantee for business work. See docs/beat/README.md for scheduler usage and docs/job/README.md for one-shot execution.
 package beat

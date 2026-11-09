@@ -1,51 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254">
   <defs>
-    <!-- everything above the pulse line: the gopher is cut exactly along the line -->
+    <!-- everything above the line: the gopher is cut exactly along it -->
     <clipPath id="above">
-      <path d="M0 0 H1254 V830 H1010 L960 900 L870 620 L790 830 H470 L420 900 L330 620 L250 830 H0 Z"/>
+      <path d="M0 0 H1254 V860 H650 L540 615 L400 860 H0 Z"/>
     </clipPath>
   </defs>
   <rect width="1254" height="1254" fill="#fff"/>
 
-  <g stroke="#0B1F3A" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
-    <!-- ears -->
-    <circle cx="455" cy="395" r="64" fill="#3DDCFF"/>
-    <circle cx="455" cy="395" r="32" fill="#06A6D6" stroke="none"/>
-    <circle cx="805" cy="395" r="64" fill="#3DDCFF"/>
-    <circle cx="805" cy="395" r="32" fill="#06A6D6" stroke="none"/>
+  <g clip-path="url(#above)">
+    <g transform="translate(815 640) rotate(12)" stroke="#0B1F3A" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
+      <!-- ears -->
+      <circle cx="-175" cy="-215" r="64" fill="#3DDCFF"/>
+      <circle cx="-175" cy="-215" r="32" fill="#06A6D6" stroke="none"/>
+      <circle cx="175" cy="-215" r="64" fill="#3DDCFF"/>
+      <circle cx="175" cy="-215" r="32" fill="#06A6D6" stroke="none"/>
 
-    <!-- body, clipped by the line -->
-    <g clip-path="url(#above)">
-      <path d="M405 610 A225 225 0 0 1 855 610 C860 720 880 820 890 960 H370 C380 820 400 720 405 610 Z" fill="#3DDCFF"/>
-      <path d="M470 470 A185 185 0 0 1 600 408" fill="none" stroke="#9BF0FF" stroke-width="18" opacity=".8"/>
+      <!-- body -->
+      <path d="M-225 0 A225 225 0 0 1 225 0 C230 110 250 210 260 400 H-260 C-250 210 -230 110 -225 0 Z" fill="#3DDCFF"/>
+      <path d="M-160 -140 A185 185 0 0 1 -30 -202" fill="none" stroke="#9BF0FF" stroke-width="18" opacity=".8"/>
+
+      <!-- eyes -->
+      <circle cx="-85" cy="-65" r="80" fill="#fff" stroke-width="18"/>
+      <circle cx="90" cy="-65" r="80" fill="#fff" stroke-width="18"/>
+      <circle cx="-108" cy="-54" r="31" fill="#0B1F3A" stroke="none"/>
+      <circle cx="67" cy="-54" r="31" fill="#0B1F3A" stroke="none"/>
+      <circle cx="-97" cy="-67" r="10" fill="#fff" stroke="none"/>
+      <circle cx="78" cy="-67" r="10" fill="#fff" stroke="none"/>
+
+      <!-- teeth, muzzle, nose -->
+      <rect x="-24" y="50" width="25" height="62" rx="6" fill="#fff" stroke-width="10"/>
+      <rect x="3" y="50" width="25" height="62" rx="6" fill="#fff" stroke-width="10"/>
+      <ellipse cx="2" cy="35" rx="56" ry="36" fill="#F6C99A" stroke-width="14"/>
+      <ellipse cx="2" cy="14" rx="26" ry="17" fill="#0B1F3A" stroke="none"/>
     </g>
-
-    <!-- eyes -->
-    <circle cx="545" cy="545" r="80" fill="#fff" stroke-width="18"/>
-    <circle cx="720" cy="545" r="80" fill="#fff" stroke-width="18"/>
-    <circle cx="568" cy="556" r="31" fill="#0B1F3A" stroke="none"/>
-    <circle cx="743" cy="556" r="31" fill="#0B1F3A" stroke="none"/>
-    <circle cx="579" cy="543" r="10" fill="#fff" stroke="none"/>
-    <circle cx="754" cy="543" r="10" fill="#fff" stroke="none"/>
-
-    <!-- teeth, muzzle, nose -->
-    <rect x="606" y="660" width="25" height="62" rx="6" fill="#fff" stroke-width="10"/>
-    <rect x="633" y="660" width="25" height="62" rx="6" fill="#fff" stroke-width="10"/>
-    <ellipse cx="632" cy="645" rx="56" ry="36" fill="#F6C99A" stroke-width="14"/>
-    <ellipse cx="632" cy="624" rx="26" ry="17" fill="#0B1F3A" stroke="none"/>
   </g>
 
-  <!-- pulse line -->
-  <path d="M80 830 H250 L330 620 L420 900 L470 830 H790 L870 620 L960 900 L1010 830 H1174"
+  <!-- line with an end knob -->
+  <path d="M110 860 H400 L540 615 L650 860 H1060"
         fill="none" stroke-linejoin="round" stroke-linecap="round" stroke="#0B1F3A" stroke-width="74"/>
-  <path d="M80 830 H250 L330 620 L420 900 L470 830 H790 L870 620 L960 900 L1010 830 H1174"
+  <path d="M110 860 H400 L540 615 L650 860 H1060"
         fill="none" stroke-linejoin="round" stroke-linecap="round" stroke="#3DDCFF" stroke-width="40"/>
+  <circle cx="1110" cy="860" r="62" fill="#3DDCFF" stroke="#0B1F3A" stroke-width="20"/>
+  <ellipse cx="1132" cy="836" rx="15" ry="11" fill="#fff" transform="rotate(-30 1132 836)"/>
 
-  <!-- paws gripping the line -->
+  <!-- paws: one on the peak, one on the line -->
   <g stroke="#0B1F3A" stroke-width="14" stroke-linecap="round">
-    <ellipse cx="530" cy="806" rx="44" ry="34" fill="#F6C99A"/>
-    <path d="M516 816 v12 M544 816 v12" fill="none" stroke-width="9"/>
-    <ellipse cx="732" cy="806" rx="44" ry="34" fill="#F6C99A"/>
-    <path d="M718 816 v12 M746 816 v12" fill="none" stroke-width="9"/>
+    <ellipse cx="535" cy="586" rx="44" ry="34" fill="#F6C99A" transform="rotate(-10 535 586)"/>
+    <path d="M521 596 v12 M549 596 v12" fill="none" stroke-width="9"/>
+    <ellipse cx="905" cy="836" rx="44" ry="34" fill="#F6C99A"/>
+    <path d="M891 846 v12 M919 846 v12" fill="none" stroke-width="9"/>
   </g>
 </svg>

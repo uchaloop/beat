@@ -1,6 +1,51 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-11-09
+
+### Breaking changes
+
+- Move assignment to `github.com/uchaloop/beat/assignment`, shared by one-shot
+  jobs and the scheduler. Middleware remains under `beat/job/middleware`.
+
+- Rename `beat.MultiHandler` to `beat.MakeMultiHandler`, matching the job API.
+
+- Move job v0.4.0 execution into `github.com/uchaloop/beat/job`, with recovery
+  middleware under `beat/job/middleware/recovery`. Scheduler signatures now use these types; types from
+  the old job module are not interchangeable.
+- Update scheduler result and assignment access to job v0.4.0 names:
+  StartedAt, IsErrorHandlerCalled, IsExecutable and ScheduledAt.
+  Record.ScheduledFor is unchanged; scheduling corrections are listed below.
+
+### Fixed
+
+- Calculate the first fixed-rate point correctly before the epoch and when
+  subtracting an offset crosses it; avoid UnixNano and slot-product overflow.
+- Separate core lifecycle documentation from Fx adapter defaults and clarify
+  module versus subpackage names.
+
+- Copy the handler slice when creating `beat.MakeMultiHandler`; later changes
+  to the caller's slice no longer change the handler composition. Handler
+  instances remain shared.
+
+### Changed
+
+- Gate releases on reusable CI, validate version tags and dated changelog sections,
+  and request the Go proxy only after publication with bounded retries.
+- Add explicit standalone-module checks, CI time limits and concurrency control.
+
+- Align internal boolean names with conventions. Lifecycle errors retain their
+  sentinel identities; their messages are now "already started" and "already stopped".
+- Preserve Record.GridPoint and Record.ScheduledFor as public naming exceptions.
+
+- Make the root README a module overview; split execution and scheduler guides,
+  with deployment settings, lifecycle diagrams and executable examples.
+
+- Declare Go 1.27.0 as the minimum stable toolchain version.
+
+### Added
+
+- Include one-shot Runner, tests and documentation in the beat module without
+  adding Fx. Remove the dependency on the standalone job module.
 
 ## [0.7.1] - 2026-10-01
 
@@ -183,3 +228,5 @@ whether a scheduler or a one-shot process runs it. beat keeps the schedule.
 [0.1.2]: https://github.com/uchaloop/beat/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/uchaloop/beat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/beat/releases/tag/v0.1.0
+
+[0.8.0]: https://github.com/uchaloop/beat/compare/v0.7.1...v0.8.0

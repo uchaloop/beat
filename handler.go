@@ -2,9 +2,10 @@ package beat
 
 import (
 	"context"
+	"slices"
 	"time"
 
-	"github.com/uchaloop/job"
+	"github.com/uchaloop/beat/job"
 )
 
 // Mode is the timing policy of the Beat that produced a run.
@@ -33,6 +34,8 @@ const (
 	ModeFixedDelay Mode = "fixed_delay"
 )
 
+// Record keeps GridPoint and ScheduledFor as agreed public naming exceptions
+// for compatibility; they describe scheduled points rather than actual starts.
 // Record describes a single completed run. It is handed to a Handler after each
 // run: the scheduling around the work, plus the job.Result the work produced.
 //
@@ -56,7 +59,7 @@ type Record struct {
 	GridPoint time.Time
 
 	// ScheduledFor is the point this replica aimed at: GridPoint plus the
-	// offset. Result.Start minus this is how late the run actually began.
+	// offset. Result.StartedAt minus this is how late the run actually began.
 	ScheduledFor time.Time
 
 	// Period is the configured spacing of the shared grid.
@@ -118,12 +121,17 @@ type noopHandler struct{}
 
 func (noopHandler) Handle(context.Context, Record) {}
 
-// MultiHandler returns a Handler that passes each Record to every handler in
+// MakeMultiHandler returns a Handler that passes each Record to every handler in
 // turn, skipping nil ones. Use it to run several sinks - metrics and logging,
 // say - behind the single Handler slot. Handlers run in order and are not
 // isolated: the core does not recover a panicking handler, so one panic
 // propagates and crashes the process. Keep handlers panic-free.
-func MultiHandler(handlers ...Handler) Handler {
+// The slice is copied, but handler instances remain shared. Concurrent Handle
+// calls are safe only if the supplied handlers support them. Typed nil handlers
+// are passed through; only nil interfaces are skipped.
+func MakeMultiHandler(handlers ...Handler) Handler {
+	handlers = slices.Clone(handlers)
+
 	return HandlerFunc(
 		func(ctx context.Context, r Record) {
 			for _, h := range handlers {

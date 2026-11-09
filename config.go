@@ -7,7 +7,7 @@ import (
 )
 
 // Config is the configuration beat declares. The env tags are inert strings: an
-// application loads them with github.com/uchaloop/confmaker and provides the
+// application loads them with github.com/uchaloop/confmaker/v2 and provides the
 // filled Config into the container. beat itself never reads the environment.
 //
 // The timeout of one attempt is not here: it belongs to the job.Runner beat

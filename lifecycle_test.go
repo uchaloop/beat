@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/uchaloop/job"
+	"github.com/uchaloop/beat/job"
 )
 
 // hooks counts how often each lifecycle hook ran.
@@ -304,9 +304,9 @@ func TestStop_DeadlineWithASlowHandler(t *testing.T) {
 }
 
 func TestStop_DuringStartup(t *testing.T) {
-	for _, fails := range []bool{false, true} {
+	for _, isFailure := range []bool{false, true} {
 		name := "success"
-		if fails {
+		if isFailure {
 			name = "failure"
 		}
 
@@ -324,7 +324,7 @@ func TestStop_DuringStartup(t *testing.T) {
 					WithOnStart(func(context.Context) error {
 						close(entered)
 						<-release
-						if fails {
+						if isFailure {
 							return startupErr
 						}
 
@@ -365,7 +365,7 @@ func TestStop_DuringStartup(t *testing.T) {
 				}
 
 				firstErr, secondErr := <-stopped, <-second
-				if fails {
+				if isFailure {
 					if !errors.Is(startErr, startupErr) || firstErr != nil || secondErr != nil || stops.Load() != 0 {
 						t.Fatalf("failed startup: start=%v stop=%v second=%v hooks=%d", startErr, firstErr, secondErr, stops.Load())
 					}
@@ -399,7 +399,7 @@ func TestStart_CanceledAfterSuccessfulHookRollsBack(t *testing.T) {
 				t.Error("cleanup inherited cancellation")
 			}
 
-			if _, ok := ctx.Deadline(); !ok {
+			if _, isOK := ctx.Deadline(); !isOK {
 				t.Error("cleanup has no deadline")
 			}
 

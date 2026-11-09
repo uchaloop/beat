@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uchaloop/job"
-	"github.com/uchaloop/job/assignment"
+	"github.com/uchaloop/beat/assignment"
+	"github.com/uchaloop/beat/job"
 )
 
 const (
@@ -36,11 +36,11 @@ var (
 	// ErrAlreadyStarted reports a second Start on a Beat that is already
 	// running. One Beat runs one loop: a second one would break the guarantee
 	// that runs never overlap.
-	ErrAlreadyStarted = errors.New("beat is already started")
+	ErrAlreadyStarted = errors.New("already started")
 
 	// ErrStopped reports a Start on a Beat that has been stopped. A stopped
 	// Beat is not restartable - build a new one with MakeBeat.
-	ErrStopped = errors.New("beat is stopped")
+	ErrStopped = errors.New("already stopped")
 
 	// ErrStillRunning reports that Stop returned before the run did: the run
 	// was cancelled, but had not returned by the time the stop deadline
@@ -56,9 +56,9 @@ type lifecycleState int
 
 const (
 	stateNew lifecycleState = iota
-	stateStarting
-	stateRunning
-	stateStopping
+	stateStartup
+	stateActive
+	stateShutdown
 	stateStopped
 )
 
@@ -75,7 +75,7 @@ type Beat struct {
 	workCtx    context.Context
 	workCancel context.CancelFunc
 
-	graceful bool
+	isGraceful bool
 
 	runner  *job.Runner
 	handler Handler
@@ -92,11 +92,11 @@ type Beat struct {
 
 	// mu guards the lifecycle state, the result Stop leaves behind for any
 	// later caller, and the error a loop that stopped by itself left.
-	mu               sync.Mutex
-	state            lifecycleState
-	stopErr          error
-	loopErr          error
-	startupSucceeded bool
+	mu                  sync.Mutex
+	state               lifecycleState
+	stopErr             error
+	loopErr             error
+	isStartupSuccessful bool
 
 	// loopDone closes when no run is in flight and none ever will be. stopDone
 	// closes once the first Stop has finished, so a second one can report its
@@ -169,7 +169,7 @@ func MakeBeat(cfg Config, runner *job.Runner, opts ...Option) (*Beat, error) {
 		workCtx:    workCtx,
 		workCancel: workCancel,
 
-		graceful: s.graceful,
+		isGraceful: s.isGraceful,
 
 		runner:  runner,
 		handler: s.handler,
@@ -228,7 +228,7 @@ func (b *Beat) Start(ctx context.Context) error {
 	b.mu.Lock()
 
 	switch b.state {
-	case stateStarting, stateRunning, stateStopping:
+	case stateStartup, stateActive, stateShutdown:
 		b.mu.Unlock()
 
 		return ErrAlreadyStarted
@@ -238,15 +238,15 @@ func (b *Beat) Start(ctx context.Context) error {
 		return ErrStopped
 	}
 
-	b.state = stateStarting
+	b.state = stateStartup
 	b.mu.Unlock()
 
 	startupErr := b.runOnStart(ctx)
 
 	b.mu.Lock()
-	b.startupSucceeded = startupErr == nil
+	b.isStartupSuccessful = startupErr == nil
 
-	if b.state != stateStarting {
+	if b.state != stateStartup {
 		// Stop owns its result and stopDone, even if startup fails meanwhile.
 		b.mu.Unlock()
 		b.closeLoopDone()
@@ -265,7 +265,7 @@ func (b *Beat) Start(ctx context.Context) error {
 		return startupErr
 	}
 
-	b.state = stateRunning
+	b.state = stateActive
 
 	if err := ctx.Err(); err != nil {
 		// The hook completed, so its resources need the paired cleanup even if
@@ -329,13 +329,13 @@ func (b *Beat) Stop(ctx context.Context) error {
 
 		return nil
 
-	case stateStopping, stateStopped:
+	case stateShutdown, stateStopped:
 		b.mu.Unlock()
 
 		return b.awaitStopResult(ctx)
 	}
 
-	b.state = stateStopping
+	b.state = stateShutdown
 	b.mu.Unlock()
 
 	err := b.shutdown(ctx)
@@ -366,7 +366,7 @@ func (b *Beat) Done() <-chan struct{} { return b.loopDone }
 func (b *Beat) shutdown(ctx context.Context) error {
 	b.loopCancel()
 
-	if !b.graceful {
+	if !b.isGraceful {
 		b.workCancel()
 	}
 
@@ -386,11 +386,11 @@ func (b *Beat) shutdown(ctx context.Context) error {
 	b.workCancel()
 
 	b.mu.Lock()
-	startupSucceeded := b.startupSucceeded
+	isStartupSuccessful := b.isStartupSuccessful
 	loopErr := b.loopErr
 	b.mu.Unlock()
 
-	if !startupSucceeded {
+	if !isStartupSuccessful {
 		return loopErr
 	}
 
@@ -444,14 +444,14 @@ func (b *Beat) runLoop() {
 		// mutex Stop moves the state with. Checking a cancelled context here
 		// would leave a window: a Stop landing between the check and the call
 		// would still be followed by a fresh attempt.
-		if !b.acceptsAttempt() {
+		if !b.isAttemptAllowed() {
 			return
 		}
 
 		jobEnd := time.Now()
 
 		var backoff time.Duration
-		if decision.Execute {
+		if decision.IsExecutable {
 			record := b.runAttempt(target, missed)
 			missed = 0
 
@@ -471,27 +471,27 @@ func (b *Beat) runLoop() {
 // attemptEnd reports when the work stopped, for the backoff to measure from.
 //
 // A Result the runner never measured - the caller's context was already done,
-// so nothing ran - carries a zero Start. Adding a duration to that yields a
+// so nothing ran - carries a zero StartedAt. Adding a duration to that yields a
 // timestamp from year one, which would silently swallow any backoff asked for
 // on the way out. Today only a shutdown reaches here, and the loop leaves
 // straight after, but the schedule should never be handed a meaningless point.
 func attemptEnd(result job.Result) time.Time {
-	if result.Start.IsZero() {
+	if result.StartedAt.IsZero() {
 		return time.Now()
 	}
 
-	return result.Start.Add(result.Duration)
+	return result.StartedAt.Add(result.Duration)
 }
 
 // decide asks the cluster rotation who owns the point behind target. Without a
 // rotation every point is this process's own.
 func (b *Beat) decide(target time.Time) (assignment.Decision, error) {
 	if b.rotation == nil {
-		return assignment.Decision{Execute: true}, nil
+		return assignment.Decision{IsExecutable: true}, nil
 	}
 
 	decision, err := b.rotation.Decide(assignment.Invocation{
-		ScheduledFor: b.schedule.sharedGridPoint(target),
+		ScheduledAt: b.schedule.sharedGridPoint(target),
 	})
 	if err != nil {
 		return assignment.Decision{}, err
@@ -535,12 +535,12 @@ func (b *Beat) endLoopWithError(err error) {
 //
 // A target already in the past returns at once, so a process that was away for a
 // while runs once against a stale point - the Record says so, with a large gap
-// between ScheduledFor and Result.Start - and the run after it can follow soon.
+// between ScheduledFor and Result.StartedAt - and the run after it can follow soon.
 // For work that drains a queue that is the useful behaviour; catching up point
 // by point would not be.
 func (b *Beat) sleepUntil(target time.Time) bool {
 	for {
-		if b.schedulingStopped() {
+		if b.isScheduleStopped() {
 			return false
 		}
 
@@ -553,20 +553,20 @@ func (b *Beat) sleepUntil(target time.Time) bool {
 	}
 }
 
-// acceptsAttempt reports whether a new attempt may begin.
+// isAttemptAllowed reports whether a new attempt may begin.
 //
 // Stop moves the state to stopping under this same mutex, so an attempt is
 // either accepted before that - and a graceful stop then lets it finish - or
 // refused after it. There is no in between, which a context check could not
 // promise. The mutex is not held for the work itself.
-func (b *Beat) acceptsAttempt() bool {
+func (b *Beat) isAttemptAllowed() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return b.state == stateRunning
+	return b.state == stateActive
 }
 
-func (b *Beat) schedulingStopped() bool {
+func (b *Beat) isScheduleStopped() bool {
 	select {
 	case <-b.loopCtx.Done():
 		return true

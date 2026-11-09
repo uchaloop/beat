@@ -7,16 +7,16 @@ import (
 	"github.com/uchaloop/beat"
 )
 
-func TestMultiHandler_FansOutInOrderSkippingNil(t *testing.T) {
+func TestMakeMultiHandler_FansOutInOrderSkippingNil(t *testing.T) {
 	var order []string
 
-	mk := func(name string) beat.Handler {
+	makeHandler := func(name string) beat.Handler {
 		return beat.HandlerFunc(func(context.Context, beat.Record) {
 			order = append(order, name)
 		})
 	}
 
-	h := beat.MultiHandler(mk("a"), nil, mk("b"))
+	h := beat.MakeMultiHandler(makeHandler("a"), nil, makeHandler("b"))
 	h.Handle(context.Background(), beat.Record{})
 
 	if len(order) != 2 || order[0] != "a" || order[1] != "b" {
@@ -24,7 +24,22 @@ func TestMultiHandler_FansOutInOrderSkippingNil(t *testing.T) {
 	}
 }
 
-func TestMultiHandler_Empty(t *testing.T) {
+func TestMakeMultiHandler_Empty(t *testing.T) {
 	// Must not panic with no handlers.
-	beat.MultiHandler().Handle(context.Background(), beat.Record{})
+	beat.MakeMultiHandler().Handle(context.Background(), beat.Record{})
+}
+
+func TestMakeMultiHandler_CopiesInputSlice(t *testing.T) {
+	var got string
+	handlers := []beat.Handler{beat.HandlerFunc(func(context.Context, beat.Record) {
+		got = "original"
+	})}
+	handler := beat.MakeMultiHandler(handlers...)
+	handlers[0] = beat.HandlerFunc(func(context.Context, beat.Record) {
+		got = "replacement"
+	})
+	handler.Handle(context.Background(), beat.Record{})
+	if got != "original" {
+		t.Fatalf("handler = %q, want original", got)
+	}
 }
