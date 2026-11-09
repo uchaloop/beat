@@ -15,11 +15,10 @@ periodic data synchronization. These are examples, not a restriction on use case
 
 ## Installation
 
-Requires Go 1.27.0 or later. This guide describes v0.8.0, which includes the
-job and assignment packages in the beat module.
+Requires Go 1.27.0 or later. The beat module includes the job and assignment packages.
 
 ```sh
-go get github.com/uchaloop/beat@v0.8.0
+go get github.com/uchaloop/beat@latest
 ```
 
 ## Quick start
