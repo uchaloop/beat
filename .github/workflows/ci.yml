@@ -9,8 +9,10 @@ on:
   pull_request:
     branches:
       - main
+      - 'release/**'
 
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -18,6 +20,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOWORK: "off"
+    concurrency:
+      group: beat-checks-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +50,9 @@ jobs:
       - name: Check module files
         run: go mod tidy -diff
 
+      - name: Check release validation
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Build
         run: go build ./...
 
@@ -50,6 +61,7 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
       - name: Compile Windows tests
         env:
           GOOS: windows

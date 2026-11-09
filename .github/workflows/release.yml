@@ -8,62 +8,65 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: beat-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  pkg-go-dev:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger pkg.go.dev to index the release
-        env:
-          MODULE: github.com/uchaloop/beat
-        run: |
-          version="${GITHUB_REF_NAME}"
-          curl -fsS "https://proxy.golang.org/${MODULE}/@v/${version}.info"
+  checks:
+    uses: ./.github/workflows/ci.yml
 
   release:
+    needs: checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          # The whole history, so the previous tag can be found for the
-          # comparison link.
           fetch-depth: 0
 
-      - name: Take the release notes from the changelog
+      - name: Validate tag and extract release notes
+        id: notes
+        run: python3 -B .github/scripts/release_notes.py
+
+      - name: Add comparison link
         run: |
-          version="${GITHUB_REF_NAME#v}"
-
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" { found = 1; next }
-            found && /^## / { exit }
-            found
-          ' CHANGELOG.md > notes.md
-
-          # A tag whose version is still filed under Unreleased would publish an
-          # empty release. Say so instead.
-          if ! grep -q '[^[:space:]]' notes.md; then
-            echo "CHANGELOG.md has no section for ${version}" >&2
-            exit 1
-          fi
-
-          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          previous="$(git describe --tags --abbrev=0 --match 'v[01].*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
           if [ -n "$previous" ]; then
             printf '\n**Full Changelog**: %s/compare/%s...%s\n' \
               "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-              "$previous" "${GITHUB_REF_NAME}" >> notes.md
+              "$previous" "${GITHUB_REF_NAME}" >> "${RUNNER_TEMP}/beat-release-notes.md"
           fi
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ steps.notes.outputs.is_prerelease }}
         run: |
-          args=(--title "${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag)
+          args=(--title "${GITHUB_REF_NAME}" --notes-file "${RUNNER_TEMP}/beat-release-notes.md" --verify-tag)
+          # Preserve the project's v0 prerelease policy; suffixes also count.
+          if [ "$IS_PRERELEASE" = true ]; then
+            args+=(--prerelease --latest=false)
+          fi
+          if ! gh release create "${GITHUB_REF_NAME}" "${args[@]}"; then
+            echo "Release creation failed. Check whether this tag already has a release before retrying; do not move or recreate the tag." >&2
+            exit 1
+          fi
 
-          # Everything before 1.0 is published as a pre-release: the API is still
-          # allowed to break between minors.
-          case "${GITHUB_REF_NAME}" in
-            v0.*) args+=(--prerelease) ;;
-          esac
-
-          gh release create "${GITHUB_REF_NAME}" "${args[@]}"
+  go-proxy:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request the released version from the Go proxy
+        env:
+          MODULE: github.com/uchaloop/beat
+        run: |
+          # Failure here does not undo the published release. Retry this job only.
+          # A successful response does not confirm pkg.go.dev indexing.
+          curl --fail --show-error --silent \
+            --retry 4 --retry-all-errors --retry-delay 5 --retry-max-time 180 \
+            --connect-timeout 10 --max-time 30 \
+            "https://proxy.golang.org/${MODULE}/@v/${GITHUB_REF_NAME}.info"

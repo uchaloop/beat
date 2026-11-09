@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Gate releases on reusable CI, validate version tags and dated changelog sections,
+  and request the Go proxy only after publication with bounded retries.
+- Add explicit standalone-module checks, CI time limits and concurrency control.
+
 - Align internal boolean names with conventions. Lifecycle errors retain their
   sentinel identities; their messages are now "already started" and "already stopped".
 - Preserve Record.GridPoint and Record.ScheduledFor as public naming exceptions.
